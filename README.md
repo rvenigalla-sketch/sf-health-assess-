@@ -24,7 +24,7 @@ rejects or edits every finding before the client report is produced.
 3. **Python 3.10+** with `pip install pyyaml openpyxl python-docx`, and **Java 11+** (Code Analyzer).
 4. **The plugin** (in Claude Code):
    ```
-   /plugin marketplace add <git URL of this repo>
+   /plugin marketplace add https://github.com/rvenigalla-sketch/sf-health-assess-.git
    /plugin install sf-health@a360-salesforce
    ```
    Restart Claude Code. Then set `models.useAgentTypes: true` in your client config, so reviewers run
