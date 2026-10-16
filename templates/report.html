@@ -1,0 +1,464 @@
+<title>__TITLE__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: audit dossier. Summary band (score + headline), then scorecard grid, findings register,
+   automation order-of-execution lanes, roadmap columns, method footer. Single centered column, max 1180px. */
+:root {
+  --bg: #f4f6f8;            /* blue-slate paper */
+  --surface: #ffffff;
+  --sunk: #e9edf1;
+  --ink: #17212b;
+  --ink-2: #4a5866;
+  --line: #d3dae1;
+  --accent: #0e5f6e;        /* deep teal: links, focus, selected */
+  --accent-soft: #d6ecef;
+  --crit: #b42318; --crit-bg: #fde8e6;
+  --high: #c2410c; --high-bg: #fdebdc;
+  --med: #946200;  --med-bg: #fbf1d3;
+  --low: #52606d;  --low-bg: #e6eaee;
+  --good: #23704a; --good-bg: #dcf1e5;
+  --fair: #946200; --fair-bg: #fbf1d3;
+  --bad: #b42318;  --bad-bg: #fde8e6;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151b; --surface: #161e26; --sunk: #1d2731; --ink: #e3e9ef; --ink-2: #9aa8b5; --line: #2b3742;
+  --accent: #5cc3d1; --accent-soft: #143840;
+  --crit: #ff8a7a; --crit-bg: #3a1714; --high: #ffa36b; --high-bg: #3a2010; --med: #e9c25a; --med-bg: #33290d;
+  --low: #a9b6c2; --low-bg: #26313b; --good: #6fd39c; --good-bg: #12301f; --fair: #e9c25a; --fair-bg: #33290d;
+  --bad: #ff8a7a; --bad-bg: #3a1714; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #161e26; --sunk: #1d2731; --ink: #e3e9ef; --ink-2: #9aa8b5; --line: #2b3742;
+  --accent: #5cc3d1; --accent-soft: #143840;
+  --crit: #ff8a7a; --crit-bg: #3a1714; --high: #ffa36b; --high-bg: #3a2010; --med: #e9c25a; --med-bg: #33290d;
+  --low: #a9b6c2; --low-bg: #26313b; --good: #6fd39c; --good-bg: #12301f; --fair: #e9c25a; --fair-bg: #33290d;
+  --bad: #ff8a7a; --bad-bg: #3a1714; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; }
+.wrap > * { min-width: 0; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: 0.005em; }
+h1 { font-size: 2rem; font-weight: 700; line-height: 1.15; }
+h2 { font-size: 1.35rem; font-weight: 600; }
+h3 { font-size: 1.05rem; font-weight: 600; }
+p { margin: 0; }
+.eyebrow { font-family: var(--font-display); font-size: 0.78rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.09em; color: var(--ink-2); }
+.muted { color: var(--ink-2); }
+.mono { font-family: var(--font-mono); font-size: 0.84em; }
+.num { font-variant-numeric: tabular-nums; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section { display: grid; gap: 16px; min-width: 0; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+
+/* --- pills */
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 0.8rem;
+  font-weight: 600; white-space: nowrap; }
+.sev-Critical { color: var(--crit); background: var(--crit-bg); }
+.sev-High { color: var(--high); background: var(--high-bg); }
+.sev-Medium { color: var(--med); background: var(--med-bg); }
+.sev-Low { color: var(--low); background: var(--low-bg); }
+.rate-Good { color: var(--good); background: var(--good-bg); }
+.rate-Fair { color: var(--fair); background: var(--fair-bg); }
+.rate-Needs { color: var(--bad); background: var(--bad-bg); }
+.rate-Not { color: var(--ink-2); background: var(--sunk); }
+.fid { font-family: var(--font-mono); font-size: 0.8rem; padding: 1px 7px; border-radius: 4px; background: var(--accent-soft);
+  color: var(--accent); border: 0; cursor: pointer; }
+.fid:hover { text-decoration: underline; }
+
+/* --- summary band */
+.band { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: start; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r); padding: 28px; }
+.dial { width: 156px; display: grid; justify-items: center; gap: 8px; }
+.dial svg { width: 156px; height: 156px; }
+.dial .arc { transition: stroke-dashoffset 900ms cubic-bezier(.2,.7,.2,1); }
+.summary { display: grid; gap: 12px; min-width: 0; }
+.summary .headline { font-family: var(--font-display); font-size: 1.3rem; font-weight: 600; line-height: 1.3; }
+.summary p { max-width: 70ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.85rem; color: var(--ink-2); }
+.banner { border: 1px solid var(--high); background: var(--high-bg); color: var(--ink); border-radius: var(--r); padding: 10px 14px;
+  font-size: 0.9rem; }
+.recs { display: grid; gap: 8px; margin: 4px 0 0; padding: 0; list-style: none; counter-reset: rec; }
+.recs li { display: grid; grid-template-columns: 26px 1fr; gap: 8px; counter-increment: rec; }
+.recs li::before { content: counter(rec); font-family: var(--font-display); font-weight: 700; color: var(--accent); }
+
+/* --- scorecard */
+.areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.area { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 10px; }
+.area-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.area-score { font-family: var(--font-display); font-size: 2rem; font-weight: 700; line-height: 1; }
+.stack { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--sunk); }
+.stack span { display: block; height: 100%; }
+.stack .c { background: var(--crit); } .stack .h { background: var(--high); } .stack .m { background: var(--med); } .stack .l { background: var(--low); }
+.counts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.8rem; color: var(--ink-2); }
+.area p { font-size: 0.88rem; color: var(--ink-2); }
+
+/* --- facts strip */
+.facts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.fact { padding: 12px 14px; display: grid; gap: 2px; align-content: start; box-shadow: 1px 0 0 var(--line), 0 1px 0 var(--line); }
+.fact b { font-family: var(--font-display); font-size: 1.4rem; font-weight: 600; }
+.fact span { font-size: 0.8rem; color: var(--ink-2); }
+.delta { font-size: 0.75rem; font-family: var(--font-mono); }
+
+/* --- findings register */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.filters input, .filters select { font: inherit; font-size: 0.9rem; padding: 6px 10px; border: 1px solid var(--line);
+  border-radius: var(--r); background: var(--surface); color: var(--ink); }
+.filters input { flex: 1 1 220px; min-width: 0; }
+.chip { font: inherit; font-size: 0.82rem; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.register { display: grid; gap: 8px; }
+.finding { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--low); border-radius: var(--r); min-width: 0; }
+.finding.s-Critical { border-left-color: var(--crit); } .finding.s-High { border-left-color: var(--high); }
+.finding.s-Medium { border-left-color: var(--med); }
+.finding summary { list-style: none; cursor: pointer; padding: 12px 14px; display: grid;
+  grid-template-columns: 64px 1fr auto; gap: 4px 12px; align-items: baseline; }
+.finding summary::-webkit-details-marker { display: none; }
+.finding .ttl { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.finding .sub { grid-column: 2 / -1; font-size: 0.82rem; color: var(--ink-2); overflow-wrap: anywhere; }
+.finding .body { padding: 0 14px 14px 90px; display: grid; gap: 10px; min-width: 0; }
+.finding .body h4 { margin: 0; font-family: var(--font-display); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); }
+.evidence { display: grid; gap: 8px; }
+.evidence figure { margin: 0; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.evidence figcaption { font-family: var(--font-mono); font-size: 0.78rem; padding: 4px 10px; background: var(--sunk); color: var(--ink-2); overflow-wrap: anywhere; }
+.evidence pre { margin: 0; padding: 8px 10px; font-family: var(--font-mono); font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.empty { padding: 24px; text-align: center; color: var(--ink-2); background: var(--surface); border: 1px dashed var(--line); border-radius: var(--r); }
+
+/* --- automation lanes */
+.lanes-ctl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.lanes-ctl select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); color: var(--ink); }
+.lanes { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.lane { display: grid; grid-template-columns: 240px 1fr; background: var(--surface); }
+.lane .step { padding: 10px 14px; background: var(--sunk); display: grid; gap: 2px; align-content: start; }
+.lane .step b { font-family: var(--font-display); font-weight: 600; font-size: 0.92rem; }
+.lane .step span { font-size: 0.76rem; color: var(--ink-2); }
+.lane .items { padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; min-width: 0; }
+.auto { font-family: var(--font-mono); font-size: 0.76rem; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--line);
+  background: var(--bg); overflow-wrap: anywhere; max-width: 100%; }
+.auto.overlap { border-color: var(--high); background: var(--high-bg); }
+.overlaps { font-size: 0.85rem; display: grid; gap: 4px; }
+
+/* --- roadmap */
+.roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.phase { display: grid; gap: 10px; align-content: start; }
+.phase-head { border-top: 3px solid var(--accent); padding-top: 8px; display: grid; gap: 2px; }
+.item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; display: grid; gap: 6px; }
+.item .ids { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* --- method */
+.method { font-size: 0.86rem; color: var(--ink-2); display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 18px; }
+.method p { max-width: 90ch; }
+table.diff { border-collapse: collapse; font-size: 0.86rem; min-width: 420px; }
+table.diff th, table.diff td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+table.diff td.num { text-align: right; }
+.scroll { overflow-x: auto; }
+
+@media (max-width: 900px) { .facts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .band { grid-template-columns: 1fr; padding: 20px; }
+  .dial { justify-self: start; }
+  .roadmap { grid-template-columns: 1fr; }
+  .lane { grid-template-columns: 1fr; }
+  .finding summary { grid-template-columns: 1fr auto; }
+  .finding summary .sevcell { grid-row: 1; }
+  .finding .sub { grid-column: 1 / -1; }
+  .finding .body { padding: 0 14px 14px; }
+}
+@media (prefers-reduced-motion: reduce) { .dial .arc { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header id="top" class="band" aria-labelledby="report-title">
+    <div class="dial" id="dial"></div>
+    <div class="summary">
+      <div class="eyebrow" id="eyebrow"></div>
+      <h1 id="report-title"></h1>
+      <div class="headline" id="headline"></div>
+      <div id="banner"></div>
+      <div id="paragraphs" class="summary"></div>
+      <div>
+        <div class="eyebrow">Top recommendations</div>
+        <ol class="recs" id="recs"></ol>
+      </div>
+      <div class="meta" id="meta"></div>
+    </div>
+  </header>
+
+  <section aria-labelledby="h-areas">
+    <div class="section-head"><h2 id="h-areas">Scorecard</h2><span class="muted" id="areas-note"></span></div>
+    <div class="areas" id="areas"></div>
+  </section>
+
+  <section aria-labelledby="h-facts">
+    <div class="section-head"><h2 id="h-facts">Org at a glance</h2><span class="muted" id="facts-note"></span></div>
+    <div class="facts" id="facts"></div>
+  </section>
+
+  <section aria-labelledby="h-findings" id="findings">
+    <div class="section-head"><h2 id="h-findings">Findings</h2><span class="muted num" id="f-count"></span></div>
+    <div class="filters" role="search">
+      <input id="f-search" type="search" placeholder="Search title, component, recommendation" aria-label="Search findings">
+      <select id="f-area" aria-label="Filter by area"><option value="">All areas</option></select>
+      <span id="f-sev"></span>
+    </div>
+    <div class="register" id="register"></div>
+  </section>
+
+  <section aria-labelledby="h-auto" id="automation">
+    <div class="section-head"><h2 id="h-auto">Automation on save</h2>
+      <span class="muted">Everything that runs when a record is saved, in Salesforce order of execution</span></div>
+    <div class="lanes-ctl"><label for="auto-obj" class="eyebrow">Object</label><select id="auto-obj"></select>
+      <span class="muted" id="auto-count"></span></div>
+    <div class="lanes" id="lanes"></div>
+    <div class="overlaps" id="overlaps"></div>
+  </section>
+
+  <section aria-labelledby="h-road" id="roadmap">
+    <div class="section-head"><h2 id="h-road">Roadmap</h2><span class="muted">Final priority and timing are agreed with the client</span></div>
+    <div class="roadmap" id="road"></div>
+  </section>
+
+  <section aria-labelledby="h-base" id="baseline-sec" hidden>
+    <div class="section-head"><h2 id="h-base">Since the last assessment</h2><span class="muted" id="base-note"></span></div>
+    <div class="scroll"><table class="diff" id="base-table"></table></div>
+  </section>
+
+  <footer class="method" id="method"></footer>
+</div>
+
+<script id="report-data" type="application/json">__REPORT_DATA__</script>
+<script>
+(function () {
+  "use strict";
+  var D = JSON.parse(document.getElementById("report-data").textContent);
+  var SEVS = ["Critical", "High", "Medium", "Low"];
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function rateClass(r) { return "rate-" + String(r || "Not").split(" ")[0]; }
+  function fidButton(id) { return '<button type="button" class="fid" data-fid="' + esc(id) + '">' + esc(id) + "</button>"; }
+  var byId = {};
+  D.findings.forEach(function (f) { byId[f.id] = f; });
+
+  /* ---------- header */
+  var S = D.synthesis || {};
+  var ex = S.executive_summary || {};
+  $("eyebrow").textContent = "Salesforce org health assessment · " + D.meta.date;
+  $("report-title").textContent = D.meta.client;
+  $("headline").textContent = ex.headline || "";
+  $("paragraphs").innerHTML = (ex.paragraphs || []).map(function (p) { return "<p>" + esc(p) + "</p>"; }).join("");
+  $("recs").innerHTML = (ex.top_recommendations || []).map(function (r) {
+    return "<li><span>" + esc(r.text) + " " + (r.finding_ids || []).filter(function (i) { return byId[i]; }).map(fidButton).join(" ") + "</span></li>";
+  }).join("") || "<li><span class='muted'>Summary not generated for this run.</span></li>";
+  var banners = [];
+  if (D.review.autoAccepted) banners.push("Draft: findings were not reviewed by a consultant. Do not share this version with the client.");
+  if (D.review.pending) banners.push(D.review.pending + " finding(s) still awaiting consultant review are not shown.");
+  $("banner").innerHTML = banners.map(function (b) { return '<div class="banner" role="note">' + esc(b) + "</div>"; }).join("");
+  $("meta").innerHTML = [
+    "Org: " + esc(D.meta.orgHost || "-"),
+    "Findings: " + D.findings.length,
+    "Reviewed by consultant: " + (D.review.autoAccepted ? "no" : "yes"),
+    D.meta.dataPolicy === "metadata-only" ? "Scope: metadata only" : "Scope: metadata and org settings",
+  ].map(function (x) { return "<span>" + x + "</span>"; }).join("");
+
+  // Score dial: one scale, 0-100 mapped onto the ring.
+  (function () {
+    var sc = D.scores.overall, R = 64, C = 2 * Math.PI * R;
+    var col = { Good: "var(--good)", Fair: "var(--fair)", "Needs attention": "var(--bad)" }[D.scores.overallRating] || "var(--ink-2)";
+    var off = sc == null ? C : C * (1 - sc / 100);
+    $("dial").innerHTML =
+      '<svg viewBox="0 0 156 156" role="img" aria-label="Overall score ' + (sc == null ? "not assessed" : sc + " of 100") + '">' +
+      '<circle cx="78" cy="78" r="' + R + '" fill="none" stroke="var(--sunk)" stroke-width="12"/>' +
+      '<circle class="arc" cx="78" cy="78" r="' + R + '" fill="none" stroke="' + col + '" stroke-width="12" stroke-linecap="round" ' +
+      'stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 78 78)"/>' +
+      '<text x="78" y="82" text-anchor="middle" font-family="var(--font-display)" font-size="40" font-weight="700" fill="var(--ink)">' + (sc == null ? "–" : sc) + "</text>" +
+      '<text x="78" y="104" text-anchor="middle" font-size="12" fill="var(--ink-2)">of 100</text></svg>' +
+      '<span class="pill ' + rateClass(D.scores.overallRating) + '">' + esc(D.scores.overallRating) + "</span>";
+  })();
+
+  /* ---------- scorecard */
+  var summaries = {};
+  (S.area_summaries || []).forEach(function (a) { summaries[a.area] = a.summary; });
+  var areaKeys = Object.keys(D.scores.areas);
+  $("areas").innerHTML = areaKeys.map(function (k) {
+    var a = D.scores.areas[k], c = a.counts || {}, total = SEVS.reduce(function (s, v) { return s + (c[v] || 0); }, 0);
+    var bar = total ? SEVS.map(function (v) {
+      return c[v] ? '<span class="' + v[0].toLowerCase() + '" style="width:' + (100 * c[v] / total) + '%" title="' + v + ": " + c[v] + '"></span>' : "";
+    }).join("") : "";
+    return '<article class="area"><div class="area-top"><h3>' + esc(a.label) + '</h3><span class="pill ' + rateClass(a.rating) + '">' + esc(a.rating) + "</span></div>" +
+      '<div class="area-score num">' + (a.score == null ? "–" : a.score) + "</div>" +
+      '<div class="stack" aria-hidden="true">' + bar + "</div>" +
+      '<div class="counts num">' + (total ? SEVS.filter(function (v) { return c[v]; }).map(function (v) { return v + " " + c[v]; }).join(" · ") : (a.score == null ? "Not part of this run" : "No findings")) + "</div>" +
+      (summaries[k] ? "<p>" + esc(summaries[k]) + "</p>" : "") + "</article>";
+  }).join("");
+  $("areas-note").textContent = "Score = 100 × e^(−severity points ÷ " + D.scores.formula.scale + ")";
+
+  /* ---------- facts */
+  var deltas = (D.baseline && D.baseline.metrics) || {};
+  $("facts").innerHTML = D.facts.map(function (f) {
+    var d = deltas[f.label], dl = "";
+    if (d && d[0] != null && d[1] != null && d[0] !== d[1]) dl = '<span class="delta">' + (d[1] > d[0] ? "+" : "") + (Math.round((d[1] - d[0]) * 10) / 10) + " since last</span>";
+    return '<div class="fact"><b class="num">' + esc(f.value) + "</b><span>" + esc(f.label) + "</span>" + dl + "</div>";
+  }).join("");
+  $("facts-note").textContent = "Counted by script from the retrieved metadata and org checks";
+
+  /* ---------- findings register */
+  var state = { q: "", area: "", sev: {} };
+  SEVS.forEach(function (s) { state.sev[s] = true; });
+  var areasPresent = [];
+  D.findings.forEach(function (f) { if (areasPresent.indexOf(f.area) < 0) areasPresent.push(f.area); });
+  $("f-area").innerHTML += areasPresent.map(function (a) {
+    return '<option value="' + esc(a) + '">' + esc((D.scores.areas[a] || {}).label || a) + "</option>";
+  }).join("");
+  $("f-sev").innerHTML = SEVS.map(function (s) {
+    var n = D.findings.filter(function (f) { return f.severity === s; }).length;
+    return '<button type="button" class="chip" aria-pressed="true" data-sev="' + s + '">' + s + " " + n + "</button>";
+  }).join(" ");
+
+  function findingHTML(f) {
+    var ev = f.evidence.map(function (e) {
+      return "<figure><figcaption>" + esc(e.path) + ":" + e.line_start + (e.line_end !== e.line_start ? "–" + e.line_end : "") +
+        "</figcaption><pre>" + esc(e.quote) + "</pre></figure>";
+    }).join("");
+    var ver = f.verification ? '<p class="muted">Verification: ' + esc(f.verification.verdict) + (f.verification.reason ? " · " + esc(f.verification.reason) : "") + "</p>" : "";
+    var rel = (f.related_components || []).length ? '<p class="muted mono">Also involves: ' + esc(f.related_components.join(", ")) + "</p>" : "";
+    return '<details class="finding s-' + f.severity + '" id="' + esc(f.id) + '"><summary>' +
+      '<span class="mono muted">' + esc(f.id) + "</span>" +
+      '<span class="ttl">' + esc(f.title) + "</span>" +
+      '<span class="sevcell"><span class="pill sev-' + f.severity + '">' + f.severity + "</span></span>" +
+      '<span class="sub"><span class="mono">' + esc(f.component) + "</span> · " + esc((D.scores.areas[f.area] || {}).label || f.area) +
+      " · effort " + esc(f.effort) + (f.baseline_status && f.baseline_status !== "unchanged" ? " · " + esc(f.baseline_status) : "") + "</span>" +
+      '</summary><div class="body">' +
+      "<div><h4>Impact</h4><p>" + esc(f.impact) + "</p></div>" +
+      "<div><h4>Recommendation</h4><p>" + esc(f.recommendation) + "</p></div>" +
+      '<div><h4>Evidence</h4><div class="evidence">' + ev + "</div></div>" + rel + ver + "</div></details>";
+  }
+  function renderRegister() {
+    var q = state.q.toLowerCase();
+    var list = D.findings.filter(function (f) {
+      if (!state.sev[f.severity]) return false;
+      if (state.area && f.area !== state.area) return false;
+      if (!q) return true;
+      return (f.title + " " + f.component + " " + f.recommendation + " " + f.id).toLowerCase().indexOf(q) >= 0;
+    });
+    $("f-count").textContent = list.length + " of " + D.findings.length + " shown";
+    $("register").innerHTML = list.length ? list.map(findingHTML).join("") : '<div class="empty">No findings match these filters.</div>';
+  }
+  $("f-search").addEventListener("input", function (e) { state.q = e.target.value; renderRegister(); });
+  $("f-area").addEventListener("change", function (e) { state.area = e.target.value; renderRegister(); });
+  $("f-sev").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-sev]"); if (!b) return;
+    var s = b.getAttribute("data-sev"); state.sev[s] = !state.sev[s];
+    b.setAttribute("aria-pressed", String(state.sev[s])); renderRegister();
+  });
+  renderRegister();
+
+  // Any finding-id chip jumps to that finding, clearing filters that would hide it.
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".fid"); if (!b) return;
+    var id = b.getAttribute("data-fid");
+    state.q = ""; state.area = ""; $("f-search").value = ""; $("f-area").value = "";
+    SEVS.forEach(function (s) { state.sev[s] = true; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-sev]"), function (x) { x.setAttribute("aria-pressed", "true"); });
+    renderRegister();
+    var el = document.getElementById(id);
+    if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "start" }); el.querySelector("summary").focus(); }
+  });
+
+  /* ---------- automation lanes */
+  var STAGES = [
+    ["flowsBeforeSave", "Before-save flows", "Fast field updates on the same record"],
+    ["beforeTriggers", "Apex before triggers", ""],
+    ["validationRules", "Validation rules", "Can block the save"],
+    ["afterTriggers", "Apex after triggers", ""],
+    ["workflowRules", "Workflow rules", "Retired tool · field updates re-run triggers"],
+    ["processBuilders", "Process Builders", "Retired tool"],
+    ["flowsAfterSave", "After-save flows", "Related records, emails, actions"],
+  ];
+  var objs = Object.keys(D.automation).sort(function (a, b) { return D.automation[b].activeAutomationCount - D.automation[a].activeAutomationCount; });
+  $("auto-obj").innerHTML = objs.map(function (o) {
+    return '<option value="' + esc(o) + '">' + esc(o) + " (" + D.automation[o].activeAutomationCount + ")</option>";
+  }).join("");
+  function renderLanes(o) {
+    var a = D.automation[o];
+    if (!a) { $("lanes").innerHTML = '<div class="empty">No automation retrieved.</div>'; return; }
+    var overlapNames = {};
+    Object.keys(a.fieldOverlaps || {}).forEach(function (fld) {
+      a.fieldOverlaps[fld].forEach(function (w) { overlapNames[w.split(":").slice(1).join(":")] = true; });
+    });
+    var trig = function (when) { return a.triggers.filter(function (t) { return t.active && t.events.some(function (e) { return e.indexOf(when) === 0; }); }); };
+    var data = {
+      flowsBeforeSave: a.flowsBeforeSave.filter(function (f) { return f.status === "Active"; }),
+      beforeTriggers: trig("before"), afterTriggers: trig("after"),
+      validationRules: a.validationRules.filter(function (v) { return v.active; }),
+      workflowRules: a.workflowRules.filter(function (w) { return w.active; }),
+      processBuilders: a.processBuilders.filter(function (f) { return f.status === "Active"; }),
+      flowsAfterSave: a.flowsAfterSave.filter(function (f) { return f.status === "Active"; }),
+    };
+    $("auto-count").textContent = a.activeAutomationCount + " active automation(s)";
+    $("lanes").innerHTML = STAGES.map(function (s) {
+      var items = data[s[0]];
+      var chips = items.length ? items.map(function (x) {
+        var name = x.name, short = name.indexOf(o + ".") === 0 ? name.slice(o.length + 1) : name;
+        return '<span class="auto' + (overlapNames[name] ? " overlap" : "") + '" title="' + esc(name) + '">' + esc(short) + "</span>";
+      }).join("") : '<span class="muted">None</span>';
+      return '<div class="lane"><div class="step"><b>' + esc(s[1]) + "</b>" + (s[2] ? "<span>" + esc(s[2]) + "</span>" : "") +
+        '</div><div class="items">' + chips + "</div></div>";
+    }).join("");
+    var ov = Object.keys(a.fieldOverlaps || {});
+    $("overlaps").innerHTML = ov.length ? "<p><b>Fields written by more than one automation</b> (highlighted above):</p>" + ov.map(function (fld) {
+      return '<div><span class="mono">' + esc(fld) + "</span> ← " + esc(a.fieldOverlaps[fld].map(function (w) { return w.split(":").slice(1).join(":"); }).join(", ")) + "</div>";
+    }).join("") : '<p class="muted">No field is written by more than one active automation on this object.</p>';
+  }
+  $("auto-obj").addEventListener("change", function (e) { renderLanes(e.target.value); });
+  renderLanes(objs[0]);
+
+  /* ---------- roadmap */
+  var R = S.roadmap || {};
+  var PH = [["quick_wins", "Quick wins", "First 2–3 weeks"], ["short_term", "Short term", "1–2 months"], ["long_term", "Longer term", "3–6 months"]];
+  $("road").innerHTML = PH.map(function (p) {
+    var items = (R[p[0]] || []).map(function (it) {
+      var ids = (it.finding_ids || []).filter(function (i) { return byId[i]; });
+      return '<div class="item"><b>' + esc(it.title) + '</b><span class="muted">' + esc(it.why) + "</span>" +
+        '<div class="ids">' + ids.map(fidButton).join("") + ' <span class="pill sev-Low">effort ' + esc(it.effort) + "</span></div></div>";
+    }).join("") || '<div class="empty">Nothing in this phase.</div>';
+    return '<div class="phase"><div class="phase-head"><h3>' + p[1] + '</h3><span class="muted">' + p[2] + "</span></div>" + items + "</div>";
+  }).join("");
+
+  /* ---------- baseline */
+  if (D.baseline && D.baseline.previous) {
+    $("baseline-sec").hidden = false;
+    var b = D.baseline;
+    $("base-note").textContent = "Compared with the assessment of " + b.previous + ": " + b.findings.new + " new, " + b.findings.fixed + " fixed";
+    var rows = [["Overall score", b.scores.overall]].concat(Object.keys(b.metrics).map(function (k) { return [k, b.metrics[k]]; }));
+    $("base-table").innerHTML = "<thead><tr><th>Measure</th><th>Previous</th><th>Now</th></tr></thead><tbody>" +
+      rows.map(function (r) { return "<tr><td>" + esc(r[0]) + '</td><td class="num">' + esc(r[1][0] == null ? "–" : r[1][0]) + '</td><td class="num">' + esc(r[1][1] == null ? "–" : r[1][1]) + "</td></tr>"; }).join("") + "</tbody>";
+  }
+
+  /* ---------- method */
+  $("method").innerHTML =
+    "<h3>How this assessment was done</h3>" +
+    "<p>A360 retrieved the org's metadata read-only with the Salesforce CLI" + (D.meta.dataPolicy === "metadata-only" ? "" : " and ran read-only org checks (Security Health Check, sfdx-hardis)") +
+    ". Salesforce Code Analyzer and scripts counted and parsed everything that can be measured. AI reviewers each examined a small part of the org; every finding had to quote the exact lines it is based on, and a script rejected any that did not match the files. High and Critical findings were re-checked by an independent reviewer" +
+    (D.review.autoAccepted ? "." : ", and an A360 consultant reviewed every finding before this report.") + "</p>" +
+    '<p class="num">Scope: ' + esc(D.meta.scope) + "</p>" +
+    "<p>Scores: " + esc(D.scores.formula.text) + ". Severity points: Critical " + D.scores.formula.severityWeights.Critical +
+    ", High " + D.scores.formula.severityWeights.High + ", Medium " + D.scores.formula.severityWeights.Medium + ", Low " + D.scores.formula.severityWeights.Low + ".</p>";
+})();
+</script>

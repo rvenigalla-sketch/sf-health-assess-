@@ -22,6 +22,8 @@ KINDS = {
     # kind: (required keys identifying the object, key used for the file name, output folder)
     "review": ({"shard_id", "findings", "coverage", "follow_up"}, "shard_id", ("findings", "raw")),
     "verify": ({"finding_id", "verdict", "reason"}, "finding_id", ("findings", "verdicts")),
+    "synthesis": ({"kind", "executive_summary", "roadmap"}, "kind", ("findings",)),
+    "followup": ({"shard_id", "findings", "coverage", "follow_up"}, "shard_id", ("findings", "raw")),
 }
 
 

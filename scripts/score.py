@@ -112,10 +112,14 @@ def score_areas(findings: list[dict], cfg: dict, assessed: set[str] | None = Non
     scored = {a: v for a, v in areas.items() if v["score"] is not None}
     total_w = sum(w.get(a, 1) for a in scored) or 1
     overall = round(sum(v["score"] * w.get(a, 1) for a, v in scored.items()) / total_w) if scored else None
-    return {"overall": overall, "overallRating": rating(overall) if overall is not None else "Not assessed",
+    overall_rating = rating(overall) if overall is not None else "Not assessed"
+    # A Critical finding means the org cannot be rated Good overall, whatever the average says.
+    if overall_rating == "Good" and any(f["severity"] == "Critical" for f in findings):
+        overall_rating = "Fair"
+    return {"overall": overall, "overallRating": overall_rating,
             "areas": areas, "formula": {
         "severityWeights": weights, "scale": scale, "areaWeights": w,
-        "text": "area score = 100 x exp(-sum of severity weights / scale); overall = weighted mean"}}
+        "text": "area score = 100 x exp(-sum of severity weights / scale); overall = weighted mean of assessed areas; any Critical finding caps the overall rating at Fair"}}
 
 
 def main() -> int:
