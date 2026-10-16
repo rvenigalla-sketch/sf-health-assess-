@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
@@ -25,6 +26,7 @@ from pathlib import Path
 
 from common import Run, Timer, estimate_tokens, info, load_config, read_json, write_json
 from flows import parse_flow
+from digests import build_digests
 from org_facts import build_org_facts
 
 NS = "{http://soap.sforce.com/2006/04/metadata}"
@@ -333,15 +335,20 @@ def main() -> int:
     run = Run(Path(args.run))
 
     with Timer() as t:
+        # Rebuild from scratch so no digest from an earlier index run lingers.
+        for sub in ("flows", "workflows", "crma", "datamodel", "orgfacts"):
+            shutil.rmtree(run.path("index", sub), ignore_errors=True)
         src = find_source_root(run.path("metadata"))
         items, flows = build_inventory(src, run.root, run.path("index"))
         add_references(items, run.root)
+        digest_stats = build_digests(items, run.root, run.path("index"))
         automation = build_automation_map(items, flows)
         path_index = {i["path"]: i["id"] for i in items}
         evidence, rule_counts = normalize_code_analyzer(run.path("tools"), path_index, cfg)
         metrics = build_metrics(items, flows, automation, evidence)
         metrics["codeAnalyzerRuleCounts"] = rule_counts
         metrics["org"] = build_org_facts(run.path("tools"), run.path("index", "orgfacts"))
+        metrics["digests"] = digest_stats
 
         write_json(run.path("index", "inventory.json"), items)
         write_json(run.path("index", "automation_map.json"), automation)
