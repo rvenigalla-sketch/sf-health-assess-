@@ -96,6 +96,14 @@ shards:
   maxComponents: 30
   maxAgentsPerRun: 300
 
+scoring:
+  # area score = 100 x exp(-sum(severity weights) / scale); overall = weighted mean of areas.
+  severityWeights: {Critical: 25, High: 10, Medium: 4, Low: 1}
+  scale: 60
+  good: 80
+  fair: 60
+  areaWeights: {security: 1.5, automation: 1.25, apex: 1, flow: 1, datamodel: 0.75, crma: 0.75, release: 0.75, integration: 0.75}
+
 models:
   reviewer: sonnet
   verifier: opus
