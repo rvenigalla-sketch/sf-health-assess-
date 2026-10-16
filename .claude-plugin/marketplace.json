@@ -1,0 +1,13 @@
+{
+  "name": "a360-salesforce",
+  "owner": {
+    "name": "A360"
+  },
+  "plugins": [
+    {
+      "name": "sf-health",
+      "source": "./",
+      "description": "Salesforce org health assessment: sharded multi-agent review with evidence-validated findings, consultant review gate, HTML/Word/Excel report."
+    }
+  ]
+}

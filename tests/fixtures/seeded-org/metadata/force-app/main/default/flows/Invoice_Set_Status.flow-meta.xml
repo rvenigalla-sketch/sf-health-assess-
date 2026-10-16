@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>62.0</apiVersion>
+    <label>Invoice Set Status</label>
+    <processType>AutoLaunchedFlow</processType>
+    <recordUpdates>
+        <name>Set_Status</name>
+        <label>Set Status</label>
+        <inputAssignments>
+            <field>Status__c</field>
+            <value><stringValue>Review</stringValue></value>
+        </inputAssignments>
+        <inputAssignments>
+            <field>Amount_Total__c</field>
+            <value><numberValue>0.0</numberValue></value>
+        </inputAssignments>
+        <inputReference>$Record</inputReference>
+    </recordUpdates>
+    <start>
+        <connector><targetReference>Set_Status</targetReference></connector>
+        <object>Invoice__c</object>
+        <recordTriggerType>CreateAndUpdate</recordTriggerType>
+        <triggerType>RecordAfterSave</triggerType>
+    </start>
+    <status>Active</status>
+</Flow>

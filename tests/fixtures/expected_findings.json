@@ -1,0 +1,18 @@
+{
+  "description": "Problems planted in tests/fixtures/seeded-org. Each must be found (recall). 'clean' components should get no High/Critical finding (precision check).",
+  "planted": [
+    {"id": "P01", "component": "ApexClass:InvoiceService", "category": "bulkification", "minSeverity": "High", "what": "SOQL inside a loop in trigger-called code"},
+    {"id": "P02", "component": "ApexClass:InvoiceService", "category": "error-handling", "minSeverity": "High", "what": "empty catch around DML"},
+    {"id": "P03", "component": "ApexClass:InvoiceService", "category": "maintainability", "minSeverity": "Medium", "what": "hard-coded queue ID", "altCategories": ["security", "release-readiness"]},
+    {"id": "P04", "component": "ApexClass:InvoiceSearchController", "category": "security", "minSeverity": "Critical", "what": "SOQL injection in @AuraEnabled without sharing"},
+    {"id": "P05", "component": "ApexClass:InvoiceServiceTest", "category": "test-quality", "minSeverity": "Medium", "what": "SeeAllData=true and no assertions"},
+    {"id": "P06", "component": "Flow:Invoice_Line_Sync", "category": "bulkification", "minSeverity": "High", "what": "record update inside a loop", "altCategories": ["performance"]},
+    {"id": "P07", "component": "Flow:Invoice_Line_Sync", "category": "maintainability", "minSeverity": "Medium", "what": "hard-coded user ID in a filter", "altCategories": ["security", "release-readiness"]},
+    {"id": "P08", "component": "Flow:Invoice_Set_Status", "category": "automation-overlap", "minSeverity": "Medium", "what": "after-save flow updating its own record (should be before-save) / re-entry", "altCategories": ["performance"]},
+    {"id": "P09", "anyOf": ["Flow:Invoice_Set_Status", "WorkflowRule:Invoice__c.Reset Total On Edit", "Flow:Invoice_PB", "AutomationSummary:Invoice__c"], "category": "automation-overlap", "minSeverity": "High", "what": "Amount_Total__c / Status__c written by several automations on one save"},
+    {"id": "P10", "anyOf": ["Flow:Invoice_PB", "WorkflowRule:Invoice__c.Reset Total On Edit", "AutomationSummary:Invoice__c"], "category": "release-readiness", "minSeverity": "Medium", "what": "active Process Builder and workflow rule (retired tools) mixed with flows and a trigger", "altCategories": ["automation-overlap"]},
+    {"id": "P11", "component": "FieldUsage:Invoice__c", "category": "data-model", "minSeverity": "Medium", "what": "AmountTotal__c duplicates Amount_Total__c"},
+    {"id": "P12", "component": "FieldUsage:Invoice__c", "category": "data-model", "minSeverity": "Low", "what": "Legacy_Code__c referenced nowhere"}
+  ],
+  "clean": ["ApexClass:CleanFormatter"]
+}

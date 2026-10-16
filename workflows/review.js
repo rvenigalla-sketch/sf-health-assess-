@@ -110,6 +110,8 @@ const results = await pipeline(
     phase: 'Review',
     schema: SHARD_REVIEW,
     ...(args.model ? { model: args.model } : {}),
+    // With the plugin installed, run as the plugin's read-only subagent type (tools: Read, Grep, Glob).
+    ...(args.useAgentTypes ? { agentType: `sf-health:${s.reviewer}` } : {}),
   }),
 )
 

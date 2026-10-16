@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>50.0</apiVersion>
+    <label>Invoice Line Sync</label>
+    <processType>AutoLaunchedFlow</processType>
+    <recordLookups>
+        <name>Get_Siblings</name>
+        <label>Get Siblings</label>
+        <connector><targetReference>Each_Sibling</targetReference></connector>
+        <object>Invoice__c</object>
+        <filters>
+            <field>OwnerId</field>
+            <operator>EqualTo</operator>
+            <value><stringValue>0055e000001AbCdAAK</stringValue></value>
+        </filters>
+        <getFirstRecordOnly>false</getFirstRecordOnly>
+    </recordLookups>
+    <loops>
+        <name>Each_Sibling</name>
+        <label>Each Sibling</label>
+        <collectionReference>Get_Siblings</collectionReference>
+        <nextValueConnector><targetReference>Update_Sibling</targetReference></nextValueConnector>
+    </loops>
+    <recordUpdates>
+        <name>Update_Sibling</name>
+        <label>Update Sibling</label>
+        <connector><targetReference>Each_Sibling</targetReference></connector>
+        <inputAssignments>
+            <field>Status__c</field>
+            <value><stringValue>Synced</stringValue></value>
+        </inputAssignments>
+        <inputReference>Each_Sibling</inputReference>
+    </recordUpdates>
+    <start>
+        <connector><targetReference>Get_Siblings</targetReference></connector>
+        <object>Invoice__c</object>
+        <recordTriggerType>Update</recordTriggerType>
+        <triggerType>RecordAfterSave</triggerType>
+    </start>
+    <status>Active</status>
+</Flow>

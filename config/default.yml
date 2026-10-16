@@ -105,6 +105,9 @@ scoring:
   areaWeights: {security: 1.5, automation: 1.25, apex: 1, flow: 1, datamodel: 0.75, crma: 0.75, release: 0.75, integration: 0.75}
 
 models:
+  # true once sf-health is installed as a plugin: reviewers then run as the plugin's subagent types,
+  # which Claude Code restricts to Read/Grep/Glob. false: default workflow agents told to stay read-only.
+  useAgentTypes: false
   reviewer: sonnet
   verifier: opus
   synthesizer: opus

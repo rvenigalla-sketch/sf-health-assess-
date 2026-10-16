@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>48.0</apiVersion>
+    <label>Invoice PB</label>
+    <processType>Workflow</processType>
+    <processMetadataValues>
+        <name>ObjectType</name>
+        <value><stringValue>Invoice__c</stringValue></value>
+    </processMetadataValues>
+    <processMetadataValues>
+        <name>TriggerType</name>
+        <value><stringValue>onAllChanges</stringValue></value>
+    </processMetadataValues>
+    <recordUpdates>
+        <name>myRule_1_A1</name>
+        <label>Set status</label>
+        <filters>
+            <field>Id</field>
+            <operator>EqualTo</operator>
+            <value><elementReference>myVariable_current.Id</elementReference></value>
+        </filters>
+        <inputAssignments>
+            <field>Status__c</field>
+            <value><stringValue>Processed</stringValue></value>
+        </inputAssignments>
+        <object>Invoice__c</object>
+    </recordUpdates>
+    <startElementReference>myRule_1_A1</startElementReference>
+    <status>Active</status>
+</Flow>
