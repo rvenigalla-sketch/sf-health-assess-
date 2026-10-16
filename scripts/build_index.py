@@ -239,6 +239,56 @@ def build_automation_map(items: list[dict], flows: dict) -> dict:
     return out
 
 
+def write_automation_summaries(automation: dict, items: list[dict], out: Path) -> None:
+    """Per object, everything that runs on save, in Salesforce order of execution."""
+    out.mkdir(parents=True, exist_ok=True)
+    dup_rules = Counter(i["name"].split(".")[0] for i in items if i["type"] == "DuplicateRule")
+    for obj, a in automation.items():
+        act = lambda xs: [x for x in xs if x.get("status", "Active") == "Active"]
+        lines = [f"AUTOMATION ON {obj}  (active automations: {a['activeAutomationCount']})",
+                 "Order of execution on save (Salesforce):", ""]
+
+        def section(title, rows):
+            lines.append(f"{title}:")
+            lines.extend(f"  - {r}" for r in rows) if rows else lines.append("  (none)")
+
+        fmt_flow = lambda f: f"{f['name']} on={f['on']} entry={'; '.join(f['entry'])[:200] or 'always'} writes={', '.join(f['fieldsWritten'])[:300] or '-'}"
+        section("1. Before-save record-triggered flows", [fmt_flow(f) for f in act(a["flowsBeforeSave"])])
+        before = [t for t in a["triggers"] if t["active"] and any(e.startswith("before") for e in t["events"])]
+        section("2. Apex BEFORE triggers", [f"{t['name']} {t['events']}{' (dlrs generated)' if t['managedTool'] else ''}" for t in before])
+        section("3. Validation rules (active)", [v["name"] for v in a["validationRules"] if v["active"]])
+        section("4. Duplicate rules", [f"{dup_rules[obj]} rule(s)"] if dup_rules.get(obj) else [])
+        after = [t for t in a["triggers"] if t["active"] and any(e.startswith("after") for e in t["events"])]
+        section("5. Apex AFTER triggers", [f"{t['name']} {t['events']}{' (dlrs generated)' if t['managedTool'] else ''}" for t in after])
+        section("6. Workflow rules (active; field updates re-run before/after update triggers once)",
+                [f"{w['name']} trigger={w['triggerType']} writes={', '.join(w['fieldsWritten']) or '-'}" for w in a["workflowRules"] if w["active"]])
+        section("7. Process Builders (active)", [fmt_flow(f) for f in act(a["processBuilders"])])
+        section("8. After-save record-triggered flows", [fmt_flow(f) for f in act(a["flowsAfterSave"])])
+        inactive = [f["name"] for k in ("flowsBeforeSave", "flowsAfterSave", "processBuilders") for f in a[k] if f["status"] != "Active"]
+        lines += ["", f"Inactive / draft versions on this object (not running): {', '.join(inactive) or 'none'}",
+                  f"Inactive workflow rules: {', '.join(w['name'] for w in a['workflowRules'] if not w['active']) or 'none'}", "",
+                  "FIELDS WRITTEN BY MORE THAN ONE ACTIVE AUTOMATION:"]
+        lines += [f"  {f}: {', '.join(w)}" for f, w in a["fieldOverlaps"].items()] or ["  none"]
+        (out / f"{obj}.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def register_generated(items: list[dict], run_root: Path, index_dir: Path) -> None:
+    """Generated tables become inventory components so findings about them can be validated."""
+    for folder, ctype in (("orgfacts", "OrgFact"), ("datamodel", "FieldUsage"), ("automation", "AutomationSummary")):
+        for f in sorted((index_dir / folder).glob("*.txt")):
+            text = f.read_text(encoding="utf-8")
+            items.append({"id": f"{ctype}:{f.stem}", "type": ctype, "name": f.stem,
+                          "path": f.relative_to(run_root).as_posix(), "object": f.stem if ctype != "OrgFact" else "",
+                          "lines": text.count("\n"), "tokens": estimate_tokens(text)})
+
+
+def write_api_versions(items: list[dict], out_file: Path) -> None:
+    rows = sorted((float(i["apiVersion"]), i["type"], i["name"]) for i in items
+                  if i.get("apiVersion") and i["type"] in ("ApexClass", "ApexTrigger", "Flow"))
+    out_file.write_text("# API version per Apex class / trigger / flow, oldest first\nApiVersion | Type | Name\n"
+                        + "\n".join(f"{v} | {t} | {n}" for v, t, n in rows) + "\n", encoding="utf-8")
+
+
 # --------------------------------------------------------------------------- evidence
 def normalize_code_analyzer(tools_dir: Path, path_index: dict, cfg: dict) -> tuple[list[dict], dict]:
     """Keep severity <= maxSeverity (minus style rules) as evidence; count every rule."""
@@ -336,7 +386,7 @@ def main() -> int:
 
     with Timer() as t:
         # Rebuild from scratch so no digest from an earlier index run lingers.
-        for sub in ("flows", "workflows", "crma", "datamodel", "orgfacts"):
+        for sub in ("flows", "workflows", "crma", "datamodel", "orgfacts", "automation"):
             shutil.rmtree(run.path("index", sub), ignore_errors=True)
         src = find_source_root(run.path("metadata"))
         items, flows = build_inventory(src, run.root, run.path("index"))
@@ -349,6 +399,9 @@ def main() -> int:
         metrics["codeAnalyzerRuleCounts"] = rule_counts
         metrics["org"] = build_org_facts(run.path("tools"), run.path("index", "orgfacts"))
         metrics["digests"] = digest_stats
+        write_api_versions(items, run.path("index", "orgfacts", "api_versions.txt"))
+        write_automation_summaries(automation, items, run.path("index", "automation"))
+        register_generated(items, run.root, run.path("index"))
 
         write_json(run.path("index", "inventory.json"), items)
         write_json(run.path("index", "automation_map.json"), automation)

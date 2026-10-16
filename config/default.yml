@@ -92,6 +92,8 @@ sanitize:
 shards:
   # Source tokens per review shard (keeps each reviewer well under its context window).
   tokenBudget: 45000
+  # Max components per shard: beyond this, attention spreads thin even when tokens fit.
+  maxComponents: 30
   maxAgentsPerRun: 300
 
 models:
