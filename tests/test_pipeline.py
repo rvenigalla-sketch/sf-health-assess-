@@ -18,7 +18,8 @@ sys.path.insert(0, str(SCRIPTS))
 
 import plan_shards  # noqa: E402
 from common import load_config  # noqa: E402
-from score import score_areas  # noqa: E402
+from common import Run  # noqa: E402
+from score import assessed_areas, score_areas  # noqa: E402
 
 
 def run_script(name, *args):
@@ -159,6 +160,12 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue((self.run_dir / "report" / name).exists())
 
     # ---------------- scoring
+    def test_areas_without_shards_not_assessed(self):
+        areas = assessed_areas(Run(self.run_dir))
+        self.assertIn("apex", areas)
+        self.assertNotIn("crma", areas)          # fixture has no CRM Analytics assets
+        self.assertNotIn("integration", areas)   # and no integration metadata
+
     def test_scoring_formula_and_critical_cap(self):
         cfg = load_config()
         f = lambda sev, area="apex": {"severity": sev, "area": area}

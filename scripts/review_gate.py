@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -76,6 +77,21 @@ def export(run: Run) -> Path:
     ]:
         help_ws.append([line])
     help_ws.column_dimensions["A"].width = 100
+
+    # For audit only: findings the verifier disproved. They are not imported; if one is actually
+    # right, raise it with the team and re-run the verifier rather than editing files by hand.
+    refuted_path = run.path("findings", "refuted.jsonl")
+    refuted = [json.loads(l) for l in refuted_path.open(encoding="utf-8") if l.strip()] if refuted_path.exists() else []
+    if refuted:
+        rws = wb.create_sheet("Refuted by verifier")
+        rws.append(["Severity", "Component", "Title", "Verifier reason"])
+        for i, w in enumerate((10, 34, 60, 100), 1):
+            rws.column_dimensions[rws.cell(1, i).column_letter].width = w
+            rws.cell(1, i).font = Font(bold=True)
+        for f in refuted:
+            rws.append([f["severity"], f["component"], f["title"], (f.get("verification") or {}).get("reason", "")])
+            for c in range(1, 5):
+                rws.cell(rws.max_row, c).alignment = Alignment(wrap_text=True, vertical="top")
     out = run.path("review", "findings_review.xlsx")
     wb.save(out)
     return out

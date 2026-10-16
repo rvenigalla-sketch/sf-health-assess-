@@ -43,19 +43,22 @@ stop, show its last lines and say what to do. Never skip a stage silently.
    (roughly 2–3× the review estimate for the whole run).
 4. **Review**:
    - `ARGS = workflow_args.py review --run RUN` (prints JSON).
-   - Call the Workflow tool with `scriptPath: "$PLUGIN/workflows/review.js"` and `args` = that JSON, passed as an object.
-   - When it completes, get its journal: `workflow_args.py journal --run-id <runId from the result>`.
+   - Read `$PLUGIN/workflows/review.js` and call the Workflow tool with its full text as `script`
+     (inline; `scriptPath` only accepts files inside the working folder) and `args` = that JSON,
+     passed as an object, not a string.
+   - When it completes, the journal is `<Transcript dir from the launch result>/journal.jsonl`.
+     If you don't have it: `workflow_args.py journal --run-id <runId>`.
    - `extract_results.py --journal <journal> --run RUN --kind review`
    - `validate_findings.py --run RUN`
    - Report: findings passed / rejected, and any shard without output. If shards have no output,
      resume the same workflow (`resumeFromRunId`) once, extract again and re-validate.
 5. **Follow-up** (one round only):
    - `plan_followups.py --run RUN`. If it planned 0 shards, skip to stage 6.
-   - Otherwise `workflow_args.py followup --run RUN`, run `review.js` with those args, extract with
+   - Otherwise `workflow_args.py followup --run RUN`, run `review.js` (inline, as above) with those args, extract with
      `--kind followup`, then `validate_findings.py --run RUN` again.
 6. **Verify**:
    - `workflow_args.py verify --run RUN`. If it lists no findings, skip.
-   - Otherwise run `$PLUGIN/workflows/verify.js` with those args and extract with `--kind verify`.
+   - Otherwise run `$PLUGIN/workflows/verify.js` (inline, as above) with those args and extract with `--kind verify`.
 7. **Score and compare**: `score.py --run RUN`, then `diff_baseline.py --run RUN --auto`.
 8. **Consultant review sheet**: `review_gate.py export --run RUN`
    Tell the user where `RUN/review/findings_review.xlsx` is. Ask them to set Accept / Reject / Edit

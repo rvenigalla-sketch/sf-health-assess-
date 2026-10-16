@@ -60,6 +60,21 @@ Outputs in `<run>/report/`:
 
 Rough usage per run (calibrate from each run's `run_log.json`): small org (~500 components) about 4–6M
 tokens; large org (5,000+) about 30–40M tokens, possibly spread over usage-limit resets.
+The verifier (opus, ~40k tokens per finding) is usually the largest step; `verify.maxFindings` caps it.
+
+### Pilot results (synthetic fixture, 2026-10-17)
+
+| Step | Agents | Tokens | Time |
+|---|---|---|---|
+| Review | 7 | 293k | 33 s |
+| Follow-up | 3 | 144k | 40 s |
+| Verify (opus) | 18 | 746k | 59 s |
+| Summary (opus) | 1 | 71k | 81 s |
+
+- **Quotes:** 31 of 31 findings passed the quote check; none were rejected.
+- **Accuracy:** recall 100% (15 of 15 planted problems found) and precision 100%. The clean class got no High or Critical findings.
+- **Verifier:** confirmed 11 findings, downgraded 6 and refuted 1. The refuted one was a recursion claim that couldn't happen, because the code crashes first. A follow-up finding had already reported that crash.
+- **Answer-key update:** three problems in the key (P13–P15) were real fixture issues that the AI found first; they were added to the key afterwards.
 
 ## Client config
 

@@ -68,8 +68,15 @@ def main() -> int:
     elif args.kind == "verify":
         p = run.path("findings", "validated.jsonl")
         rows = [json.loads(l) for l in p.open(encoding="utf-8")] if p.exists() else []
-        out = {**base, "findings": [{"finding_id": f["finding_id"]} for f in rows if f["severity"] in ("Critical", "High")],
-               **model_arg(cfg, "verifier")}
+        # Critical first, then High; within a severity, model-only observations before tool-confirmed ones.
+        # Anything past verify.maxFindings stays "unverified" and is flagged in the consultant sheet.
+        rank = lambda f: (f["severity"] != "Critical", f.get("basis") == "tool-confirmed")
+        serious = sorted((f for f in rows if f["severity"] in ("Critical", "High")), key=rank)
+        cap = int((cfg.get("verify") or {}).get("maxFindings", 60))
+        if len(serious) > cap:
+            print(f"VERIFY: {len(serious)} High/Critical findings, verifying the first {cap}; "
+                  f"{len(serious) - cap} stay unverified (raise verify.maxFindings to cover them)", file=sys.stderr)
+        out = {**base, "findings": [{"finding_id": f["finding_id"]} for f in serious[:cap]], **model_arg(cfg, "verifier")}
     else:
         out = {**base, **model_arg(cfg, "synthesizer")}
     print(json.dumps(out))

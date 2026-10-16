@@ -16,8 +16,10 @@ newest folder under `./health-runs/<Client>/`).
    - Exit 2 means a row has an invalid edit. Show the message.
 2. **Summary and roadmap**:
    - `python "$PLUGIN/scripts/workflow_args.py" synthesize --run RUN`
-   - Run the Workflow tool with `scriptPath: "$PLUGIN/workflows/synthesize.js"` and those args.
-   - `workflow_args.py journal --run-id <runId>`, then `extract_results.py --journal <path> --run RUN --kind synthesis`
+   - Read `$PLUGIN/workflows/synthesize.js` and run the Workflow tool with its full text as `script`
+     (inline; `scriptPath` only accepts files inside the working folder) and those args as an object.
+   - The journal is `<Transcript dir from the launch result>/journal.jsonl` (fallback:
+     `workflow_args.py journal --run-id <runId>`), then `extract_results.py --journal <path> --run RUN --kind synthesis`
 3. **Render**: `python "$PLUGIN/scripts/render.py" --run RUN [--client "<Display Name>"]`
    Report any `RENDER WARNING` lines. They mean the summary cited a finding that doesn't exist, or
    left one out of the roadmap.

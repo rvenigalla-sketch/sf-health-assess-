@@ -115,3 +115,7 @@ models:
 followUp:
   maxRounds: 1
   maxAgents: 20
+
+verify:
+  # Each verifier (opus) costs ~40k tokens. Critical first, then High; the rest stay "unverified".
+  maxFindings: 60

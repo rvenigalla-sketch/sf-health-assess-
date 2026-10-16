@@ -84,9 +84,21 @@ PLANNER_AREAS = {"apex": {"apex"}, "flow": {"flow"}, "automation": {"automation"
                  "datamodel": {"datamodel"}, "crma": {"crma"}, "platform": {"release", "integration"}}
 
 
+INTEGRATION_TYPES = {"NamedCredential", "ExternalCredential", "RemoteSiteSetting", "ConnectedApp",
+                     "ExternalServiceRegistration", "CspTrustedSite", "PlatformEventChannel"}
+
+
 def assessed_areas(run: Run) -> set[str]:
+    """Areas that had at least one review shard. Integration counts only if the org has integration metadata."""
     plan = read_json(run.path("shards", "plan.json"), {})
-    return set().union(*(PLANNER_AREAS.get(a, set()) for a in plan.get("areas", []))) if plan else set(AREA_LABELS)
+    if not plan:
+        return set(AREA_LABELS)
+    by_area = plan.get("byArea") or {}
+    areas = set().union(*(PLANNER_AREAS.get(a, set()) for a in plan.get("areas", []) if by_area.get(a, 1) > 0))
+    inventory = read_json(run.path("index", "inventory.json"), [])
+    if "integration" in areas and not any(i.get("type") in INTEGRATION_TYPES for i in inventory):
+        areas.discard("integration")
+    return areas
 
 
 def score_areas(findings: list[dict], cfg: dict, assessed: set[str] | None = None) -> dict:
