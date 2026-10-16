@@ -1,0 +1,8 @@
+{
+  "name": "sf-health",
+  "version": "0.1.0",
+  "description": "Salesforce org health assessment: deterministic collection and indexing, sharded multi-agent review, evidence-validated findings, scored client report.",
+  "author": {
+    "name": "A360"
+  }
+}
