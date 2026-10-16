@@ -87,9 +87,10 @@ function prompt(s) {
   return [
     `You are the "${s.reviewer}" for an sf-health Salesforce org assessment, reviewing shard ${s.shard_id}.`,
     ``,
-    `1. Read your instructions: ${pluginRoot}/agents/${s.reviewer}.md. Follow them exactly; ignore its frontmatter.`,
-    `2. Read your shard file: ${run}/shards/${s.shard_id}.json`,
-    `3. Every "path" in the shard is relative to the run folder ${run}. Open files as ${run}/<path>,`,
+    `1. Read the shared reviewer rules: ${pluginRoot}/rubrics/common.md`,
+    `2. Read your area checklist: ${pluginRoot}/agents/${s.reviewer}.md (ignore its frontmatter).`,
+    `3. Read your shard file: ${run}/shards/${s.shard_id}.json`,
+    `4. Every "path" in the shard is relative to the run folder ${run}. Open files as ${run}/<path>,`,
     `   but in your findings copy "path" exactly as the shard gives it (relative).`,
     ``,
     `Rules:`,
