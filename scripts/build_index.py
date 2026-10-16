@@ -25,6 +25,7 @@ from pathlib import Path
 
 from common import Run, Timer, estimate_tokens, info, load_config, read_json, write_json
 from flows import parse_flow
+from org_facts import build_org_facts
 
 NS = "{http://soap.sforce.com/2006/04/metadata}"
 TRIGGER_HEAD = re.compile(r"trigger\s+(\w+)\s+on\s+(\w+)\s*\(([^)]*)\)", re.I | re.S)
@@ -340,6 +341,7 @@ def main() -> int:
         evidence, rule_counts = normalize_code_analyzer(run.path("tools"), path_index, cfg)
         metrics = build_metrics(items, flows, automation, evidence)
         metrics["codeAnalyzerRuleCounts"] = rule_counts
+        metrics["org"] = build_org_facts(run.path("tools"), run.path("index", "orgfacts"))
 
         write_json(run.path("index", "inventory.json"), items)
         write_json(run.path("index", "automation_map.json"), automation)

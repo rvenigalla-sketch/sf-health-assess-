@@ -59,7 +59,7 @@ tools:
       - hardis:org:diagnose:apex-api-version
       - hardis:org:diagnose:unsecure-permissions
       - hardis:org:monitor:limits
-      - hardis:org:monitor:errors
+      - hardis:org:monitor:errors --days 30
   healthCheck:
     enabled: true
 

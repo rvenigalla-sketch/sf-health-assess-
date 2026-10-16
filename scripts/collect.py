@@ -218,9 +218,12 @@ def redact_json(obj):
 
 
 def tool_step(run: Run, name: str, args: list[str], out_file: str, cwd: Path | None = None,
-              redact: bool = False, timeout: int = 3600) -> bool:
+              redact: bool = False, timeout: int = 3600, org: str | None = None) -> bool:
     with Timer() as t:
-        ok, res = run_sf_json(args, cwd=cwd, timeout=timeout)
+        # SF_TARGET_ORG: some plugins (hardis) call `sf` internally without passing -o.
+        ok, res = run_sf_json(args, cwd=cwd, timeout=timeout, env={"SF_TARGET_ORG": org} if org else None)
+        # hardis exits with status 1 when it finds issues; a result payload means it ran.
+        ok = ok or bool(res.get("result"))
         if redact:
             res = redact_json(res)
         write_json(run.path("tools", out_file), res)
@@ -268,8 +271,8 @@ def hardis(run: Run, cfg: dict, org: str) -> None:
         short = command.split(":")[-1]
         # --agent: hardis non-interactive mode (no prompts).
         tool_step(run, f"hardis:{short}", [*command.split(" "), "--target-org", org, "--agent"],
-                  f"hardis-{short}.json", cwd=run.path("metadata"),
-                  redact=redact and "monitor" in command, timeout=3600)
+                  f"hardis-{short.split(' ')[0]}.json", cwd=run.path("metadata"),
+                  redact=redact and "monitor" in command, timeout=3600, org=org)
 
 
 def health_check(run: Run, cfg: dict, org: str) -> None:

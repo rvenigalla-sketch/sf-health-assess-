@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -93,20 +94,22 @@ def sf_executable() -> str:
     return exe
 
 
-def run_cmd(args: list[str], cwd: Path | None = None, timeout: int = 3600) -> tuple[int, str, str]:
+def run_cmd(args: list[str], cwd: Path | None = None, timeout: int = 3600,
+            env: dict | None = None) -> tuple[int, str, str]:
     """Run a command, return (code, stdout, stderr). Never raises on non-zero exit."""
     if args and args[0] == "sf":
         args = [sf_executable(), *args[1:]]
     proc = subprocess.run(
         args, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=timeout,
+        errors="replace", timeout=timeout, env={**os.environ, **env} if env else None,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def run_sf_json(args: list[str], cwd: Path | None = None, timeout: int = 3600) -> tuple[bool, dict]:
+def run_sf_json(args: list[str], cwd: Path | None = None, timeout: int = 3600,
+                env: dict | None = None) -> tuple[bool, dict]:
     """Run an sf command with --json. Returns (ok, parsed_json_or_error_dict)."""
-    code, out, err = run_cmd(["sf", *args, "--json"], cwd=cwd, timeout=timeout)
+    code, out, err = run_cmd(["sf", *args, "--json"], cwd=cwd, timeout=timeout, env=env)
     try:
         data = json.loads(out[out.find("{"):]) if "{" in out else {}
     except json.JSONDecodeError:
