@@ -61,23 +61,34 @@ Outputs in `<run>/report/`:
 
 Rough usage per run (calibrate from each run's `run_log.json`): small org (~500 components) about 4–6M
 tokens; large org (5,000+) about 30–40M tokens, possibly spread over usage-limit resets.
-The verifier (opus, ~40k tokens per finding) is usually the largest step; `verify.maxFindings` caps it,
-and High findings already flagged by a tool rule are re-checked by `models.verifierLight` (sonnet).
+The verifier (opus, ~40k tokens per finding) is usually the largest step; `verify.maxFindings` caps it.
+
+**Accuracy comes first in the defaults.** Every setting below that could trade accuracy for speed is
+off by default:
+- client assessments are always full reviews
+- every verifier is Opus
+- reviewers are never told to skip "known false positives"
 
 ### Repeat runs, rule checks and the finding library
 
-- **Repeat runs (incremental).** `plan_shards.py --baseline auto` compares content hashes with the
-  client's previous run. It reviews only components that changed, plus anything one call away from a
-  change (callers of a changed class, and classes it calls). Findings on untouched components are
-  carried forward with their verifier verdict, and their quotes are checked again against the new
-  files, so a stale finding is rejected rather than copied. `--baseline none` forces a full review.
+- **Repeat runs (incremental, interim checks only).** `plan_shards.py --baseline auto` compares content
+  hashes with the client's previous run. It reviews only what changed, plus:
+  - anything that calls the changed code, or that it calls
+  - everything that uses a changed object or field (a field, validation rule, record type or
+    deleted component marks its whole object as changed)
+
+  Findings on untouched components are carried forward with their verifier verdict. Their quotes
+  are checked again against the new files, so a stale finding is rejected rather than copied. A
+  client deliverable always uses `--baseline none` (the default), which is a full review.
 - **Rule checks.** `rule_checks.py` reports facts the index already knows exactly. They cost no tokens,
-  are not verified by AI, and show "rule check" in the review sheet. Reviewers are told not to repeat them.
+  are not verified by AI, and show "rule check" in the review sheet. Reviewers don't repeat the
+  generic fact. They still report a specific, worse consequence at its own severity.
 - **Finding library** (`~/.sf-health/library.jsonl`, local only, never committed). `review_gate.py import`
   saves every Accept / Edit / Reject decision with component, object, client and user names replaced
   by placeholders. The review sheet's **Library hint** column shows how similar findings were decided
-  before, and your decision on the same finding last run. Patterns rejected twice and never accepted
-  are passed to reviewers as known false positives. `python scripts/library.py stats` shows what it holds.
+  before, and your decision on the same finding last run. It is a hint for the consultant only.
+  Passing known false positives to reviewers (`library.warnReviewers`) is off by default.
+  `python scripts/library.py stats` shows what it holds.
 - **Why no vector database.** An audit must look at every component, and vector search only returns the
   "most similar" pieces. The index is an exact map of what calls what, which is more reliable for
   this. Matching in the library is by keywords; a local embedding model can be added later if it

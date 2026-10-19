@@ -275,6 +275,19 @@ class Phase2Test(unittest.TestCase):
         args = json.loads(run_script("workflow_args.py", "verify", "--run", cur).stdout)
         self.assertNotIn("carried#1", {f["finding_id"] for f in args["findings"]})   # keeps last run's verdict
 
+    def test_incremental_field_change_rereviews_everything_using_the_object(self):
+        self.snapshot("2026-01-01")
+        cur = self.snapshot("2026-02-01")
+        fld = cur / "metadata/force-app/main/default/objects/Invoice__c/fields/Amount__c.field-meta.xml"
+        fld.write_text(fld.read_text(encoding="utf-8").replace("Invoice amount", "Invoice amount (changed)"), encoding="utf-8")
+        run_script("build_index.py", "--run", cur)
+        run_script("plan_shards.py", "--run", cur, "--baseline", "auto")
+        reviewed = {c for p in (cur / "shards").glob("*-*.json")
+                    for c in json.loads(p.read_text(encoding="utf-8")).get("components", [])}
+        # Nothing but a field description changed, yet code and flows on Invoice__c are re-reviewed.
+        for cid in ("ApexClass:InvoiceSearchController", "ApexClass:InvoiceService", "Flow:Invoice_Line_Sync"):
+            self.assertIn(cid, reviewed)
+
     # ---------------- finding library
     def test_library_strips_names_and_gives_hints(self):
         import library

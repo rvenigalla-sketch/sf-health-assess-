@@ -12,8 +12,11 @@ Find real, specific problems that matter in production. This is not a style revi
    - `evidence`: tool findings for these files (`evidence_id`, rule, line, message), if any
    - `context` / `context_components`: related items, for reference only
    - `context.alreadyReported` (if present): findings a script has already made for these components.
-     Do NOT report them again (for example a missing fault path, an old API version or a Public
-     Read/Write default). Report something about the same component only if it is a different problem.
+     Don't repeat the generic fact (for example "this flow has no fault path", "old API version",
+     "Public Read/Write default"). But if, in this component, it causes a **specific, worse
+     consequence** that you can show from the files (e.g. a failing update silently drops an
+     integration message, or Public Read/Write exposes salary data), report that consequence as its
+     own finding at the severity it deserves. The script's finding is generic and may rate it lower.
    - `context.knownFalsePositives` (if present): patterns A360 consultants have rejected several times
      before, with their reason. Don't raise them unless this org's code clearly shows the reason doesn't apply.
 2. Read every file in `files`, whole. Open `sourcePath` or a context file only when you need it to judge something.

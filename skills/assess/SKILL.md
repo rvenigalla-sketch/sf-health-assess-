@@ -38,10 +38,12 @@ stop, show its last lines and say what to do. Never skip a stage silently.
    Report which tools failed (from `RUN/run_log.json`).
 2. **Index**: `build_index.py --run RUN [--config C]`
    Then **rule checks**: `rule_checks.py --run RUN [--config C]` (script-made findings, no Claude usage).
-3. **Plan**: `plan_shards.py --run RUN --baseline auto [--areas ...] [--config C]`
-   - `--baseline auto` reviews only what changed since this client's previous run and carries the
-     other findings forward. If there is no earlier run, it is a full review. Use `--baseline none`
-     when the user asks for a full re-review.
+3. **Plan**: `plan_shards.py --run RUN --baseline none [--areas ...] [--config C]`
+   - Default is a **full review**. Always use it for any assessment that goes to a client.
+   - Only if the user explicitly asks for a quick interim re-check of an org assessed before, use
+     `--baseline auto`. It reviews only what changed since the previous run, plus anything that
+     calls it or uses a changed object or field, and carries the other findings forward. Say that
+     this is an interim check, not a full assessment.
    Show the user the plan: shards per area, estimated review tokens, any over-budget shards and,
    for an incremental run, `incremental` (changed components, findings carried forward, full-plan shard count).
    If it planned 0 shards (nothing changed), skip the review and follow-up workflows, but still run

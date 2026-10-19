@@ -365,15 +365,24 @@ def changed_components(items: list[dict], prev_items: list[dict]) -> set[str] | 
     if not any(prev.values()):
         return None
     changed = {i["id"] for i in items if not i.get("sha") or prev.get(i["id"]) != i["sha"]}
+    # Deleted components can change behaviour of what remains (e.g. a removed validation rule).
+    changed_objects = {p.get("object") for p in prev_items if p["id"] not in {i["id"] for i in items}} - {"", None}
     class_ids = {i["name"]: i["id"] for i in items if i["type"] == "ApexClass"}
     changed_classes = {i["name"] for i in items if i["id"] in changed and i["type"] == "ApexClass"}
+    # A changed object, field, validation rule, record type... marks the whole object as changed, so
+    # every flow, class and trigger that uses that object is reviewed again.
+    changed_objects |= {i.get("object") for i in items if i["id"] in changed
+                        and i["type"] in ("CustomObject", "CustomField", "ValidationRule", "RecordType",
+                                          "BusinessProcess", "DuplicateRule", "SharingRules")} - {"", None}
     dirty = set(changed)
     for i in items:
-        refs = i.get("refs", {}).get("classes", [])
-        if any(r in changed_classes for r in refs):
+        refs = i.get("refs", {})
+        if any(r in changed_classes for r in refs.get("classes", [])):
             dirty.add(i["id"])
         if i["id"] in changed:
-            dirty.update(class_ids[r] for r in refs if r in class_ids)
+            dirty.update(class_ids[r] for r in refs.get("classes", []) if r in class_ids)
+        if i.get("object") in changed_objects or set(refs.get("objects", [])) & changed_objects:
+            dirty.add(i["id"])
     return dirty
 
 
@@ -413,7 +422,8 @@ def carry_forward(run: Run, prev_root: Path, items: list[dict], dirty: set[str])
 def reviewer_context(run: Run, cfg: dict, shards: list[dict]) -> None:
     """Tell each reviewer what scripts already reported and which patterns consultants keep rejecting."""
     rules = (read_json(run.path("findings", "raw", "rules.json"), {}) or {}).get("findings", [])
-    fps = {area: library.false_positives(cfg, area) for area in {s["area"] for s in shards}}
+    warn = (cfg.get("library") or {}).get("warnReviewers", False)
+    fps = {area: library.false_positives(cfg, area) for area in {s["area"] for s in shards}} if warn else {}
     for s in shards:
         mine = set(s["components"]) | set(s.get("context_components", []))
         reported = [{"title": f["title"], "components": sorted(mine & {f["component"], *f["related_components"]})}

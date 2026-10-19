@@ -113,9 +113,9 @@ models:
   useAgentTypes: false
   reviewer: sonnet
   verifier: opus
-  # High findings already confirmed by a tool rule (Code Analyzer / hardis) are re-checked by this
-  # cheaper model; Critical and model-only High findings always get `verifier`.
-  verifierLight: sonnet
+  # Model for re-checking High findings a tool rule already flagged. Default opus: accuracy first.
+  # Setting sonnet saves tokens with slightly weaker re-checks; Critical and model-only findings always use `verifier`.
+  verifierLight: opus
   synthesizer: opus
 
 followUp:
@@ -133,9 +133,11 @@ ruleChecks:
   # Apex classes / triggers / flows below this API version are reported as old.
   minApiVersion: 51.0
 
-# Repeat runs of the same org: only components that changed since the previous snapshot (or that
-# call / are called by something that changed) are reviewed again. Findings on unchanged components
-# are carried forward with their verifier verdict and re-checked against the new files.
+# Repeat runs of the same org (plan_shards.py --baseline auto): only components that changed since the
+# previous snapshot are reviewed again, plus anything that calls / is called by them or uses a changed
+# object or field. Findings on unchanged components are carried forward with their verifier verdict and
+# re-checked against the new files. For INTERIM checks only: a client deliverable is always a full
+# review (--baseline none, the default), so the assessment never depends on an older review.
 incremental:
   enabled: true
 
@@ -145,5 +147,9 @@ incremental:
 library:
   enabled: true
   path: ~/.sf-health/library.jsonl
-  # A pattern rejected this many times (and never accepted) is passed to reviewers as a known false positive.
+  # A pattern rejected this many times (and never accepted) counts as a known false positive.
   falsePositiveAfter: 2
+  # false (default, accuracy first): known false positives are only shown to the consultant in the review
+  # sheet; reviewers still look for everything. true: reviewers are also told about them, which saves
+  # review time but risks missing a real issue that looks like an old false positive.
+  warnReviewers: false

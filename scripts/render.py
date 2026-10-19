@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
-from common import PLUGIN_ROOT, Run, Timer, info, read_json
+from common import PLUGIN_ROOT, Run, Timer, info, load_config, read_json
 from diff_baseline import METRIC_PATHS, dig
 
 SEVS = ["Critical", "High", "Medium", "Low"]
@@ -65,17 +66,34 @@ def load_model(run: Run, client: str | None) -> dict:
                  "scope": scope},
         "findings": accepted["findings"], "scores": accepted["scores"], "review": accepted.get("review", {}),
         "synthesis": synthesis, "automation": automation, "facts": facts,
+        "thresholds": {k: load_config()["scoring"][k] for k in ("good", "fair")},
         "baseline": diff if diff.get("previous") else None, "problems": problems,
     }
 
 
 # --------------------------------------------------------------------------- HTML
+def logo_svg() -> str:
+    """A360 logo, inlined: XML prolog and comments removed, class names prefixed so they can't
+    collide with the page's CSS, and labelled for screen readers."""
+    p = PLUGIN_ROOT / "templates" / "a360-logo.svg"
+    if not p.exists():
+        return ""
+    svg = p.read_text(encoding="utf-8")
+    svg = re.sub(r"<\?xml.*?\?>|<!--.*?-->", "", svg, flags=re.S).strip()
+    svg = re.sub(r"\.st(\d+)", r".a360-st\1", svg)
+    svg = re.sub(r'class="st(\d+)"', r'class="a360-st\1"', svg)
+    svg = re.sub(r"<svg\b[^>]*?viewBox=\"([^\"]+)\"[^>]*>",
+                 r'<svg class="a360-logo" viewBox="\1" role="img" aria-label="A360" xmlns="http://www.w3.org/2000/svg">', svg, count=1)
+    return svg
+
+
 def render_html(model: dict, out_dir: Path) -> list[Path]:
     template = (PLUGIN_ROOT / "templates" / "report.html").read_text(encoding="utf-8")
     data = json.dumps({k: v for k, v in model.items() if k != "problems"}, ensure_ascii=False)
     data = data.replace("</", "<\\/")                     # keep the JSON inside its <script>
     title = f"{model['meta']['client']} Org Health"
-    page = template.replace("__TITLE__", title.replace("<", "")).replace("__REPORT_DATA__", data)
+    page = (template.replace("__TITLE__", title.replace("<", "")).replace("__A360_LOGO__", logo_svg())
+            .replace("__REPORT_DATA__", data))
     artifact = out_dir / "report.artifact.html"
     artifact.write_text(page, encoding="utf-8")
     full = out_dir / "report.html"
