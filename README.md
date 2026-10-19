@@ -156,8 +156,33 @@ Other defaults (see `config/default.yml`):
   workflows refuse to run with `models.useAgentTypes: false`. `models.allowUnrestrictedAgents: true` overrides
   that for development only, with a warning; never use it on a client org.
 - Client data stays in `health-runs/` (git-ignored). Never commit a run folder.
+- Personal data in collected metadata is redacted before any AI stage (see "Health data" below).
 - The finding library stores patterns only (names replaced), on the consultant's own machine.
   Set `library.enabled: false` in a client config if a client contract rules out even that.
+
+## Health data (HIPAA) and other regulated clients
+
+Use `--config <plugin>/config/hipaa.yml` (or copy its settings into the client's config). What reaches
+Claude, and what doesn't:
+
+- **Never collected:** org records (patients, members, claims, cases, attachments). The tool never queries
+  business data. With `hipaa.yml` (`dataPolicy: metadata-only`) it also skips the org checks that read
+  users, licences, login data and runtime error messages.
+- **Collected:** metadata only, meaning code and configuration (Apex, flows, objects and field definitions,
+  layouts, permissions, CRM Analytics definitions). Field *names* such as `Diagnosis__c` are schema,
+  not patient data.
+- **Redacted before any AI stage** (`scripts/privacy.py`, run automatically by `build_index.py` on the
+  consultant's machine): emails, phone numbers and SSN-shaped numbers anywhere in that metadata, and with
+  `hipaa.yml` every string literal in Apex test classes (where hand-typed test data lives). `<run>/privacy.json`
+  records counts only; `python scripts/privacy.py --run <run> --check` shows what is left (0 expected).
+- **Remaining risk:** free text an admin typed into configuration (a flow text constant, a description,
+  a CRM Analytics filter value) that names a person without an email, phone or SSN. Review areas you're
+  unsure about, or skip an area with `--areas`.
+- **Stays local:** the run folder (git-ignored), the review sheet and the report. With `hipaa.yml` nothing
+  goes into the finding library.
+- **Claude side:** files the reviewer agents read are sent to Anthropic for processing under A360's
+  Anthropic agreement. Confirm with the A360 admin which plan the team uses, its data retention, and
+  whether a BAA is in place, before telling a client anything about Anthropic's handling.
 
 ## Development
 

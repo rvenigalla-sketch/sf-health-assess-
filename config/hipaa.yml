@@ -1,0 +1,18 @@
+# Client config for orgs that hold health data (PHI) or other regulated personal data.
+# Use: /sf-health:assess "<alias>" "<Client>" --config <plugin>/config/hipaa.yml
+# (or copy it next to your client files and adjust; keep these settings).
+#
+# What it guarantees:
+# - No org queries: only metadata (code and configuration) is retrieved. No user lists, licences,
+#   login data, runtime error messages or Health Check queries are collected.
+# - Emails, phone numbers and SSN-shaped numbers in that metadata are redacted before any AI stage.
+# - String literals in Apex test classes (hand-typed test data) are redacted too.
+# - Nothing from this client goes into the cross-client finding library.
+dataPolicy: metadata-only
+
+privacy:
+  redact: true
+  redactTestData: true
+
+library:
+  enabled: false

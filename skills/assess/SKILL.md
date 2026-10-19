@@ -28,6 +28,8 @@ Before starting, confirm with the user in one message:
 - the org alias and client name
 - the config file and its `dataPolicy`
 - that a read-only retrieve of the org is OK
+- whether the org holds health data (PHI) or other regulated personal data; if so, and no client
+  config was given, use `--config "$PLUGIN/config/hipaa.yml"`
 
 If they already confirmed these in the conversation, don't ask again.
 
@@ -39,7 +41,8 @@ stop, show its last lines and say what to do. Never skip a stage silently.
 1. **Collect**: `collect.py --org "<alias>" --client "<Client>" [--date D] [--config C]`
    Preflight problems stop the run; show them. Tool failures are logged and the run continues.
    Report which tools failed (from `RUN/run_log.json`).
-2. **Index**: `build_index.py --run RUN`
+2. **Index**: `build_index.py --run RUN` (first redacts emails, phone numbers and SSN-shaped numbers in
+   the collected files, so every AI stage reads redacted text; health-data clients use `config/hipaa.yml`)
    Then **rule checks**: `rule_checks.py --run RUN` (script-made findings, no Claude usage).
 3. **Plan**: `plan_shards.py --run RUN --baseline none [--areas ...]`
    - Planning clears this run's stale raw reviewer findings and verifier verdicts from any earlier
@@ -53,6 +56,8 @@ stop, show its last lines and say what to do. Never skip a stage silently.
    for an incremental run, `incremental` (changed components, findings carried forward, full-plan shard count).
    If it planned 0 shards (nothing changed), skip the review and follow-up workflows, but still run
    `validate_findings.py --run RUN` (it checks the rule-check and carried-forward findings), then go on to stage 6.
+   Also report the privacy line from the index step (values redacted, from `RUN/privacy.json`): counts only.
+   If `privacy.json` says `"redact": false`, say clearly that AI stages will read unredacted values.
    **Ask for a go-ahead before stage 4.** This is the first step that uses Claude usage
    (roughly 2–3× the review estimate for the whole run).
 4. **Review**:
