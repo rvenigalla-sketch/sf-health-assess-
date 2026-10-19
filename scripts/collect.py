@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from common import (
@@ -174,24 +176,46 @@ def retrieve(run: Run, cfg: dict, org: str) -> bool:
     api_version = ET.parse(chunks[0]).getroot().findtext(f"{{{MD_NS}}}version")
     meta_dir = run.path("metadata")
     ensure_sfdx_project(meta_dir, api_version)
+    workers = max(1, int(cfg["retrieve"].get("parallel", 1)))
+    staging_root = run.path("_staging")
 
-    failed = []
-    for chunk in chunks:
+    def one(chunk: Path) -> bool:
+        # In parallel, each chunk gets its own SFDX project so two retrieves never write the same
+        # folder at once; files are merged into metadata/force-app afterwards.
+        cwd = meta_dir
+        if workers > 1:
+            cwd = staging_root / chunk.stem
+            shutil.rmtree(cwd, ignore_errors=True)
+            ensure_sfdx_project(cwd, api_version)
         for attempt in range(1, cfg["retrieve"]["retries"] + 2):
             with Timer() as t:
                 ok, res = run_sf_json(
                     ["project", "retrieve", "start", "--manifest", str(chunk), "--target-org", org,
                      "--wait", str(cfg["retrieve"]["waitMinutes"]), "--ignore-conflicts"],
-                    cwd=meta_dir, timeout=cfg["retrieve"]["waitMinutes"] * 60 + 300)
+                    cwd=cwd, timeout=cfg["retrieve"]["waitMinutes"] * 60 + 300)
             files = len((res.get("result") or {}).get("files", []) or [])
             run.log_step(f"retrieve:{chunk.stem}", "ok" if ok else "failed", t.seconds,
-                         attempt=attempt, files=files,
+                         attempt=attempt, files=files, parallel=workers,
                          error=None if ok else (res.get("message") or res.get("error")))
             if ok:
                 info(f"RETRIEVE {chunk.stem}: {files} files in {t.seconds:.0f}s")
-                break
-        else:
-            failed.append(chunk.stem)
+                return True
+        return False
+
+    with Timer() as total:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = dict(zip(chunks, pool.map(one, chunks)))
+        if workers > 1:
+            # Merge in chunk order. Objects are split across chunks by type (fields, record types...),
+            # so folders merge rather than replace.
+            for chunk in chunks:
+                staged = staging_root / chunk.stem / "force-app"
+                if results[chunk] and staged.exists():
+                    shutil.copytree(staged, meta_dir / "force-app", dirs_exist_ok=True)
+            shutil.rmtree(staging_root, ignore_errors=True)
+    failed = [c.stem for c, ok in results.items() if not ok]
+    run.log_step("retrieve", "failed" if failed else "ok", total.seconds, chunks=len(chunks),
+                 parallel=workers, failedChunks=failed)
     if failed:
         info(f"RETRIEVE: failed chunks {failed} (see run_log.json); continuing with partial metadata")
     return not failed
@@ -289,17 +313,22 @@ def health_check(run: Run, cfg: dict, org: str) -> None:
 
 def tools(run: Run, cfg: dict, org: str) -> None:
     t = cfg["tools"]
-    if t["codeAnalyzer"]["enabled"]:
-        code_analyzer(run, cfg)
-    if cfg["dataPolicy"] == "metadata-only":
-        info("TOOLS: dataPolicy=metadata-only, skipping org-querying tools")
-        return
-    if t["healthCheck"]["enabled"]:
-        health_check(run, cfg, org)
-    if t["orgCheck"]["enabled"]:
-        org_check(run, cfg, org)
-    if t["hardis"]["enabled"]:
-        hardis(run, cfg, org)
+    with Timer() as total, ThreadPoolExecutor(max_workers=2) as pool:
+        # Code Analyzer only reads local files, so it runs alongside the org queries below.
+        ca = pool.submit(code_analyzer, run, cfg) if t["codeAnalyzer"]["enabled"] else None
+        if cfg["dataPolicy"] == "metadata-only":
+            info("TOOLS: dataPolicy=metadata-only, skipping org-querying tools")
+        else:
+            # Org-querying tools stay one at a time: they share the org's API limits.
+            if t["healthCheck"]["enabled"]:
+                health_check(run, cfg, org)
+            if t["orgCheck"]["enabled"]:
+                org_check(run, cfg, org)
+            if t["hardis"]["enabled"]:
+                hardis(run, cfg, org)
+        if ca:
+            ca.result()
+    run.log_step("tools", "ok", total.seconds, dataPolicy=cfg["dataPolicy"])
 
 
 # --------------------------------------------------------------------------- main

@@ -43,9 +43,10 @@ again when the findings are ready for consultant review.
 
 | # | Stage | What runs | Uses Claude? |
 |---|---|---|---|
-| 1 | Collect | preflight, manifest, chunked read-only retrieve, Code Analyzer, Health Check, hardis | No |
-| 2 | Index | inventory, automation map per object, flow / workflow / CRM Analytics digests, field where-used, org facts | No |
-| 3 | Plan | shards sized to a token budget (45k) and ≤ 30 components each; cost estimate | No |
+| 1 | Collect | preflight, manifest, read-only retrieve (2 chunks at a time), Code Analyzer alongside Health Check / hardis | No |
+| 2 | Index | inventory with content hashes, automation map per object, flow / workflow / CRM Analytics digests, field where-used, org facts | No |
+| 2b | Rule checks | script-made findings: flows without fault paths, old API versions, Public Read/Write defaults | No |
+| 3 | Plan | shards sized to a token budget (45k) and ≤ 30 components each; on a repeat run only what changed; cost estimate | No |
 | 4 | Review | one read-only reviewer per shard, in parallel, structured JSON output | Yes |
 | 4b | Follow-up | ≤ 20 targeted cross-component checks raised by reviewers | Yes |
 | 5 | Validate, verify | quotes checked against the files; High/Critical re-checked by a skeptical verifier | Partly |
@@ -60,7 +61,27 @@ Outputs in `<run>/report/`:
 
 Rough usage per run (calibrate from each run's `run_log.json`): small org (~500 components) about 4–6M
 tokens; large org (5,000+) about 30–40M tokens, possibly spread over usage-limit resets.
-The verifier (opus, ~40k tokens per finding) is usually the largest step; `verify.maxFindings` caps it.
+The verifier (opus, ~40k tokens per finding) is usually the largest step; `verify.maxFindings` caps it,
+and High findings already flagged by a tool rule are re-checked by `models.verifierLight` (sonnet).
+
+### Repeat runs, rule checks and the finding library
+
+- **Repeat runs (incremental).** `plan_shards.py --baseline auto` compares content hashes with the
+  client's previous run. It reviews only components that changed, plus anything one call away from a
+  change (callers of a changed class, and classes it calls). Findings on untouched components are
+  carried forward with their verifier verdict, and their quotes are checked again against the new
+  files, so a stale finding is rejected rather than copied. `--baseline none` forces a full review.
+- **Rule checks.** `rule_checks.py` reports facts the index already knows exactly. They cost no tokens,
+  are not verified by AI, and show "rule check" in the review sheet. Reviewers are told not to repeat them.
+- **Finding library** (`~/.sf-health/library.jsonl`, local only, never committed). `review_gate.py import`
+  saves every Accept / Edit / Reject decision with component, object, client and user names replaced
+  by placeholders. The review sheet's **Library hint** column shows how similar findings were decided
+  before, and your decision on the same finding last run. Patterns rejected twice and never accepted
+  are passed to reviewers as known false positives. `python scripts/library.py stats` shows what it holds.
+- **Why no vector database.** An audit must look at every component, and vector search only returns the
+  "most similar" pieces. The index is an exact map of what calls what, which is more reliable for
+  this. Matching in the library is by keywords; a local embedding model can be added later if it
+  grows past a few hundred entries.
 
 ### Pilot results (synthetic fixture, 2026-10-17)
 
@@ -104,6 +125,8 @@ Other defaults (see `config/default.yml`):
   `sf check run-all-tests` (that runs Apex tests in the org).
 - Reviewer agents are read-only, and are told to treat org files as data, not instructions.
 - Client data stays in `health-runs/` (git-ignored). Never commit a run folder.
+- The finding library stores patterns only (names replaced), on the consultant's own machine.
+  Set `library.enabled: false` in a client config if a client contract rules out even that.
 
 ## Development
 

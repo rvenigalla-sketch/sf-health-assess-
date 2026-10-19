@@ -15,6 +15,9 @@ retrieve:
   chunkSize: 2000
   waitMinutes: 33
   retries: 2
+  # Retrieve chunks run at the same time (each into its own staging folder, merged afterwards).
+  # Same files and API calls as one at a time, just overlapped. 1 = one after another.
+  parallel: 2
   # Metadata types never retrieved: high volume, no value for a health review.
   excludeTypes:
     - Document
@@ -110,6 +113,9 @@ models:
   useAgentTypes: false
   reviewer: sonnet
   verifier: opus
+  # High findings already confirmed by a tool rule (Code Analyzer / hardis) are re-checked by this
+  # cheaper model; Critical and model-only High findings always get `verifier`.
+  verifierLight: sonnet
   synthesizer: opus
 
 followUp:
@@ -119,3 +125,25 @@ followUp:
 verify:
   # Each verifier (opus) costs ~40k tokens. Critical first, then High; the rest stay "unverified".
   maxFindings: 60
+
+# Script-made findings for facts the index already computes exactly (no tokens, same every run).
+# Reviewers are told these are already reported so they don't repeat them.
+ruleChecks:
+  enabled: true
+  # Apex classes / triggers / flows below this API version are reported as old.
+  minApiVersion: 51.0
+
+# Repeat runs of the same org: only components that changed since the previous snapshot (or that
+# call / are called by something that changed) are reviewed again. Findings on unchanged components
+# are carried forward with their verifier verdict and re-checked against the new files.
+incremental:
+  enabled: true
+
+# Local finding library: consultant decisions (accept / edit / reject) from every run, with
+# component, object and client names replaced by placeholders. Never committed, never uploaded.
+# Used for "seen before" hints in the review sheet and to warn reviewers about known false positives.
+library:
+  enabled: true
+  path: ~/.sf-health/library.jsonl
+  # A pattern rejected this many times (and never accepted) is passed to reviewers as a known false positive.
+  falsePositiveAfter: 2

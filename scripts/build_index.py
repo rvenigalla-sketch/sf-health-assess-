@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from common import Run, Timer, estimate_tokens, info, load_config, read_json, write_json
+from common import Run, Timer, content_hash, estimate_tokens, info, load_config, read_json, write_json
 from flows import parse_flow
 from digests import build_digests
 from org_facts import build_org_facts
@@ -282,6 +282,21 @@ def register_generated(items: list[dict], run_root: Path, index_dir: Path) -> No
                           "lines": text.count("\n"), "tokens": estimate_tokens(text)})
 
 
+def add_hashes(items: list[dict], run_root: Path) -> None:
+    """Content hash per component for incremental runs: the source, plus the digest reviewers read
+    (so a change in how digests are built also counts as a change)."""
+    for i in items:
+        p = run_root / i["path"]
+        if p.is_dir():
+            text = "".join(f.relative_to(p).as_posix() + f.read_text(encoding="utf-8", errors="replace")
+                           for f in sorted(x for x in p.rglob("*") if x.is_file()))
+        else:
+            text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+        if i.get("digestPath") and (run_root / i["digestPath"]).is_file():
+            text += (run_root / i["digestPath"]).read_text(encoding="utf-8", errors="replace")
+        i["sha"] = content_hash(text)
+
+
 def write_api_versions(items: list[dict], out_file: Path) -> None:
     rows = sorted((float(i["apiVersion"]), i["type"], i["name"]) for i in items
                   if i.get("apiVersion") and i["type"] in ("ApexClass", "ApexTrigger", "Flow"))
@@ -402,6 +417,7 @@ def main() -> int:
         write_api_versions(items, run.path("index", "orgfacts", "api_versions.txt"))
         write_automation_summaries(automation, items, run.path("index", "automation"))
         register_generated(items, run.root, run.path("index"))
+        add_hashes(items, run.root)
 
         write_json(run.path("index", "inventory.json"), items)
         write_json(run.path("index", "automation_map.json"), automation)

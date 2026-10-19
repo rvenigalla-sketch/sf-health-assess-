@@ -93,7 +93,8 @@ def assessed_areas(run: Run) -> set[str]:
     plan = read_json(run.path("shards", "plan.json"), {})
     if not plan:
         return set(AREA_LABELS)
-    by_area = plan.get("byArea") or {}
+    # assessedByArea: the full plan, so an area skipped by an incremental run (nothing changed) still counts.
+    by_area = plan.get("assessedByArea") or plan.get("byArea") or {}
     areas = set().union(*(PLANNER_AREAS.get(a, set()) for a in plan.get("areas", []) if by_area.get(a, 1) > 0))
     inventory = read_json(run.path("index", "inventory.json"), [])
     if "integration" in areas and not any(i.get("type") in INTEGRATION_TYPES for i in inventory):
@@ -148,7 +149,9 @@ def main() -> int:
         refuted, kept = [], []
         for f in findings:
             v = verdicts.get(f["finding_id"])
-            if v:
+            if f.get("basis") == "deterministic":
+                f["verification"] = {"verdict": "rule check", "reason": "computed by a script from the metadata; not an AI finding"}
+            elif v:
                 f["verification"] = {"verdict": v["verdict"], "reason": v["reason"]}
                 if v["verdict"] == "refuted":
                     refuted.append(f)

@@ -11,6 +11,11 @@ Find real, specific problems that matter in production. This is not a style revi
      rules and CRM Analytics, or the source itself. `sourcePath` is the raw metadata if you need detail.
    - `evidence`: tool findings for these files (`evidence_id`, rule, line, message), if any
    - `context` / `context_components`: related items, for reference only
+   - `context.alreadyReported` (if present): findings a script has already made for these components.
+     Do NOT report them again (for example a missing fault path, an old API version or a Public
+     Read/Write default). Report something about the same component only if it is a different problem.
+   - `context.knownFalsePositives` (if present): patterns A360 consultants have rejected several times
+     before, with their reason. Don't raise them unless this org's code clearly shows the reason doesn't apply.
 2. Read every file in `files`, whole. Open `sourcePath` or a context file only when you need it to judge something.
 3. Work through the tool evidence first. Confirm or drop each hit by looking at the line.
    - Real: `basis: "tool-confirmed"` with its `evidence_ids`.

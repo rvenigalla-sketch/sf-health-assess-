@@ -23,20 +23,49 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from common import Run, info, load_config, read_json, write_json
+import library
+from common import Run, earlier_run, info, load_config, read_json, write_json
 from score import SEV_ORDER, assessed_areas, score_areas
 
 COLUMNS = [
     ("ID", 8), ("Severity", 10), ("Area", 12), ("Title", 50), ("Component", 34), ("Evidence", 46),
     ("Impact", 50), ("Recommendation", 50), ("Effort", 7), ("Verification", 26), ("Baseline", 12),
+    ("Library hint", 34),
     ("Decision", 11), ("New severity", 12), ("Edited title", 40), ("Edited recommendation", 50), ("Reviewer notes", 40),
 ]
-EDITABLE_FROM = 12          # 1-based column index of "Decision"
+EDITABLE_FROM = 13          # 1-based column index of "Decision"
 SEV_FILL = {"Critical": "F8D7DA", "High": "FDE2C8", "Medium": "FFF3CD", "Low": "E2E8F0"}
 
 
-def export(run: Run) -> Path:
+def previous_decisions(run: Run) -> dict[str, str]:
+    """fingerprint -> what the consultant decided in the previous reviewed run of this client."""
+    prev = earlier_run(run, "findings/accepted.json")
+    if not prev:
+        return {}
+    acc = read_json(prev / "findings" / "accepted.json", {})
+    if (acc.get("review") or {}).get("autoAccepted"):
+        return {}
+    out = {f["fingerprint"]: f.get("review", {}).get("status", "accepted") for f in acc.get("findings", []) if f.get("fingerprint")}
+    out.update({f["fingerprint"]: "rejected" for f in acc.get("rejected", []) if f.get("fingerprint")})
+    return {fp: f"{prev.name}: {status}" for fp, status in out.items()}
+
+
+def hint_text(f: dict, prev: dict, hints) -> str:
+    parts = []
+    if f.get("fingerprint") in prev:
+        parts.append(f"Last run {prev[f['fingerprint']]}")
+    if f.get("carried_from"):
+        parts.append("Unchanged since last run (not re-reviewed)")
+    lib = hints(f) if hints else ""
+    if lib:
+        parts.append(lib)
+    return ". ".join(parts)[:400]
+
+
+def export(run: Run, cfg: dict) -> Path:
     data = read_json(run.path("findings", "findings.json"))
+    prev = previous_decisions(run)
+    hints = library.Hints(cfg, run)
     wb = Workbook()
     ws = wb.active
     ws.title = "Findings"
@@ -51,7 +80,7 @@ def export(run: Run) -> Path:
         ver = f.get("verification", {})
         ws.append([f["id"], f["severity"], f["area"], f["title"], f["component"], ev, f["impact"], f["recommendation"],
                    f["effort"], f"{ver.get('verdict', '-')}: {ver.get('reason', '')}"[:300] if ver else "-",
-                   f.get("baseline_status", ""), "", "", "", "", ""])
+                   f.get("baseline_status", ""), hint_text(f, prev, hints), "", "", "", "", ""])
         r = ws.max_row
         ws.cell(r, 2).fill = PatternFill("solid", fgColor=SEV_FILL[f["severity"]])
         for c in range(1, len(COLUMNS) + 1):
@@ -61,8 +90,10 @@ def export(run: Run) -> Path:
     sv = DataValidation(type="list", formula1='"Critical,High,Medium,Low"', allow_blank=True)
     ws.add_data_validation(dv)
     ws.add_data_validation(sv)
-    dv.add(f"L2:L{last}")
-    sv.add(f"M2:M{last}")
+    dec = ws.cell(1, EDITABLE_FROM).column_letter
+    sev = ws.cell(1, EDITABLE_FROM + 1).column_letter
+    dv.add(f"{dec}2:{dec}{last}")
+    sv.add(f"{sev}2:{sev}{last}")
     ws.freeze_panes = "B2"
     ws.auto_filter.ref = f"A1:{ws.cell(1, len(COLUMNS)).column_letter}{last}"
 
@@ -73,6 +104,9 @@ def export(run: Run) -> Path:
         "  Reject - wrong or not relevant (say why in Reviewer notes).",
         "  Edit   - correct, but change severity / title / recommendation in the blue columns.",
         "Check the Evidence column against the code before accepting High and Critical findings.",
+        "Library hint: how similar findings were decided in past assessments (all clients, names removed),",
+        "  and what you decided for this exact finding last time. A hint, not a decision: still check the row.",
+        "Verification 'rule check' rows are computed by a script from the metadata, not by the AI.",
         "Save the file, then run: python review_gate.py import --run <run folder>",
     ]:
         help_ws.append([line])
@@ -144,9 +178,14 @@ def do_import(run: Run, cfg: dict, allow_pending: bool) -> int:
         "findings": accepted, "scores": score_areas(accepted, cfg, assessed_areas(run)),
         "review": {"accepted": len(accepted), "rejected": len(rejected), "pending": len(pending)},
         "baseline": data.get("baseline"),
+        # Kept so the next run's sheet can show "last run: rejected" (not used in the report).
+        "rejected": [{k: f.get(k) for k in ("id", "fingerprint", "title", "component", "severity", "review")} for f in rejected],
     })
-    run.log_step("review-import", "ok", 0, accepted=len(accepted), rejected=len(rejected), pending=len(pending))
-    info(f"REVIEW: {len(accepted)} accepted, {len(rejected)} rejected, {len(pending)} pending -> findings/accepted.json")
+    saved = library.record(run, cfg, [(f, f["review"]["status"], f["review"].get("notes", "")) for f in accepted + rejected])
+    run.log_step("review-import", "ok", 0, accepted=len(accepted), rejected=len(rejected), pending=len(pending),
+                 librarySaved=saved)
+    info(f"REVIEW: {len(accepted)} accepted, {len(rejected)} rejected, {len(pending)} pending -> findings/accepted.json"
+         + (f"; {saved} decision(s) saved to the finding library (names removed)" if saved else ""))
     return 0
 
 
@@ -173,7 +212,7 @@ def main() -> int:
     run = Run(Path(args.run))
     cfg = load_config(args.config)
     if args.action == "export":
-        info(f"REVIEW: wrote {export(run)}")
+        info(f"REVIEW: wrote {export(run, cfg)}")
         return 0
     if args.action == "accept-all":
         return accept_all(run, cfg)

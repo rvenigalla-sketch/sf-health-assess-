@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -49,6 +51,8 @@ class Run:
     """A run workspace: <root>/<client>/<date>/{metadata,tools,index,shards,findings,review,report}."""
 
     SUBDIRS = ("manifest", "metadata", "tools", "index", "shards", "findings", "review", "report")
+    # Collection runs some steps in threads; the log file is read-modify-written, so serialize it.
+    _log_lock = threading.Lock()
 
     def __init__(self, root: Path):
         self.root = Path(root).resolve()
@@ -71,20 +75,22 @@ class Run:
         return {"steps": []}
 
     def log_step(self, name: str, status: str, seconds: float, **details) -> None:
-        log = self._read_log()
-        log["steps"].append({
-            "step": name,
-            "status": status,
-            "seconds": round(seconds, 1),
-            "at": dt.datetime.now().isoformat(timespec="seconds"),
-            **details,
-        })
-        self.log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
+        with self._log_lock:
+            log = self._read_log()
+            log["steps"].append({
+                "step": name,
+                "status": status,
+                "seconds": round(seconds, 1),
+                "at": dt.datetime.now().isoformat(timespec="seconds"),
+                **details,
+            })
+            self.log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
 
     def set_meta(self, **meta) -> None:
-        log = self._read_log()
-        log.setdefault("meta", {}).update(meta)
-        self.log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
+        with self._log_lock:
+            log = self._read_log()
+            log.setdefault("meta", {}).update(meta)
+            self.log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
 
 
 def sf_executable() -> str:
@@ -135,6 +141,19 @@ class Timer:
     @property
     def seconds(self) -> float:
         return (self.end or time.monotonic()) - self.start
+
+
+def content_hash(text: str) -> str:
+    """Short content hash for incremental runs (line endings normalized, so a re-retrieve on
+    another OS doesn't look like a change)."""
+    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def earlier_run(run: "Run", needs: str = "index/inventory.json") -> Path | None:
+    """Newest earlier date folder of the same client that has `needs` (the previous snapshot)."""
+    earlier = sorted(p for p in run.root.parent.iterdir()
+                     if p.is_dir() and p.name < run.root.name and (p / needs).exists())
+    return earlier[-1] if earlier else None
 
 
 def estimate_tokens(text: str) -> int:

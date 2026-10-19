@@ -6,8 +6,14 @@ evidence for exactly those files, and small context (related components, automat
 
 Writes <run>/shards/<shard_id>.json and <run>/shards/plan.json (counts + token/agent estimate).
 
+Incremental (--baseline): only components that changed since the previous snapshot (content hash),
+plus components one call away from a change, are planned for review. Findings from the previous
+run on untouched components are carried forward with their verifier verdicts
+(findings/raw/carried.json); validate_findings.py re-checks their quotes against the new files.
+
 Usage:
   python plan_shards.py --run <run folder> [--areas apex,flow,automation] [--config client.yml]
+                        [--baseline auto|<previous run folder>|none]
 """
 
 from __future__ import annotations
@@ -18,7 +24,15 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from common import Run, Timer, info, load_config, read_json, write_json
+import library
+from common import Run, Timer, earlier_run, info, load_config, read_json, write_json
+
+# Incremental runs: inventory ids to review again. None = review everything (full run).
+DIRTY: set[str] | None = None
+
+
+def fresh(i: dict) -> bool:
+    return DIRTY is None or i["id"] in DIRTY
 
 # Per-agent overhead (system prompt, rubric, shard file, tool calls) and re-read factor across
 # turns, used only for the pre-launch estimate. Calibrated from run logs over time.
@@ -134,8 +148,8 @@ def component_entry(i: dict, path_key: str = "path") -> dict:
 def plan_apex(items, automation, ev_by_path, budget) -> list[dict]:
     apex = [i for i in items if i["type"] in ("ApexClass", "ApexTrigger")
             and not i.get("managedTool")]          # dlrs triggers are generated code
-    code = [i for i in apex if not i.get("isTest")]
-    tests = [i for i in apex if i.get("isTest")]
+    code = [i for i in apex if not i.get("isTest") and fresh(i)]
+    tests = [i for i in apex if i.get("isTest") and fresh(i)]
     by_name = {i["name"]: i for i in apex}
     cost = lambda i: i["tokens"]
 
@@ -224,6 +238,8 @@ def plan_automation(items, automation, ev_by_path, budget) -> list[dict]:
         fixed = ([summary] if summary else [])
         extra_ids = [w["id"] for w in wf[1:]]
         group = fixed + members + vrs
+        if not any(fresh(i) for i in group) and not any(fresh({"id": x}) for x in extra_ids):
+            continue                            # incremental: nothing on this object changed
         if sum(_cost(i) for i in group) <= budget and len(group) <= MAX_ITEMS:
             whole_objects.append((obj, group, extra_ids))
             continue
@@ -258,7 +274,7 @@ def plan_automation(items, automation, ev_by_path, budget) -> list[dict]:
 
 def plan_flow(items, automation, ev_by_path, budget) -> list[dict]:
     """Internal quality of every ACTIVE flow (digests), batched by object."""
-    active = sorted((i for i in items if i["type"] == "Flow" and i.get("status") == "Active"),
+    active = sorted((i for i in items if i["type"] == "Flow" and i.get("status") == "Active" and fresh(i)),
                     key=lambda i: (i["object"] or "~", i["name"]))
     errors = _orgfact(items, "runtime_errors")
     groups = defaultdict(list)
@@ -281,7 +297,8 @@ def plan_flow(items, automation, ev_by_path, budget) -> list[dict]:
 def plan_security(items, automation, ev_by_path, budget) -> list[dict]:
     facts = _orgfact(items, "healthcheck", "permissions", "privileged_users", "underused_permsets",
                      "licenses_users", "connected_apps", "sharing")
-    if not facts:
+    # The facts are read together (permissions vs privileged users...): any change re-reviews all.
+    if not facts or not any(fresh(f) for f in facts):
         return []
     return [{
         "shard_id": f"security-{n:02d}", "area": "security", "reviewer": "security-reviewer",
@@ -291,7 +308,7 @@ def plan_security(items, automation, ev_by_path, budget) -> list[dict]:
 
 
 def plan_datamodel(items, automation, ev_by_path, budget) -> list[dict]:
-    tables = sorted((i for i in items if i["type"] == "FieldUsage"), key=lambda i: -i["tokens"])
+    tables = sorted((i for i in items if i["type"] == "FieldUsage" and fresh(i)), key=lambda i: -i["tokens"])
     return [{
         "shard_id": f"datamodel-{n:02d}", "area": "datamodel", "reviewer": "datamodel-reviewer",
         "components": [i["id"] for i in part], "files": [_read_entry(i) for i in part],
@@ -300,7 +317,8 @@ def plan_datamodel(items, automation, ev_by_path, budget) -> list[dict]:
 
 
 def plan_crma(items, automation, ev_by_path, budget) -> list[dict]:
-    assets = sorted((i for i in items if i["type"] in ("WaveDashboard", "WaveRecipe", "WaveDataflow") and i.get("digestPath")),
+    assets = sorted((i for i in items if i["type"] in ("WaveDashboard", "WaveRecipe", "WaveDataflow")
+                     and i.get("digestPath") and fresh(i)),
                     key=lambda i: (i["type"], i["name"]))
     by_type = defaultdict(list)
     for a in assets:
@@ -324,7 +342,7 @@ def plan_platform(items, automation, ev_by_path, budget) -> list[dict]:
     endpoints = [i for i in items if i["type"] in ("RemoteSiteSetting", "NamedCredential", "authproviders",
                                                    "ConnectedApp", "externalClientApps", "certs")]
     group = facts + endpoints
-    if not group:
+    if not group or not any(fresh(g) for g in group):
         return []
     return [{
         "shard_id": f"platform-{n:02d}", "area": "release", "reviewer": "platform-reviewer",
@@ -339,16 +357,85 @@ PLANNERS = {
 }
 
 
+def changed_components(items: list[dict], prev_items: list[dict]) -> set[str] | None:
+    """Ids whose content changed (or are new), plus one hop through Apex/flow class references in
+    both directions: callers of a changed class and classes a changed component calls.
+    None when the previous run has no hashes (indexed before incremental support)."""
+    prev = {i["id"]: i.get("sha") for i in prev_items}
+    if not any(prev.values()):
+        return None
+    changed = {i["id"] for i in items if not i.get("sha") or prev.get(i["id"]) != i["sha"]}
+    class_ids = {i["name"]: i["id"] for i in items if i["type"] == "ApexClass"}
+    changed_classes = {i["name"] for i in items if i["id"] in changed and i["type"] == "ApexClass"}
+    dirty = set(changed)
+    for i in items:
+        refs = i.get("refs", {}).get("classes", [])
+        if any(r in changed_classes for r in refs):
+            dirty.add(i["id"])
+        if i["id"] in changed:
+            dirty.update(class_ids[r] for r in refs if r in class_ids)
+    return dirty
+
+
+def carry_forward(run: Run, prev_root: Path, items: list[dict], dirty: set[str]) -> dict:
+    """Previous validated findings whose components are all unchanged -> findings/raw/carried.json,
+    with their verdicts copied to findings/verdicts/carried__<n>.json."""
+    ids = {i["id"] for i in items}
+    by_path = {p: i["id"] for i in items for p in (i["path"], i.get("digestPath")) if p}
+    prev_path = prev_root / "findings" / "validated.jsonl"
+    prev = [json.loads(l) for l in prev_path.read_text(encoding="utf-8").splitlines() if l.strip()] \
+        if prev_path.exists() else []
+    prev_verdicts = {v["finding_id"]: v for v in (read_json(p) for p in (prev_root / "findings" / "verdicts").glob("*.json")) if v}
+    for old in run.path("findings", "verdicts").glob("carried__*.json"):
+        old.unlink()
+    carried, dropped = [], 0
+    for f in prev:
+        if f.get("shard_id") == "rules":
+            continue                                # rule checks are recomputed every run
+        involved = {f["component"], *f.get("related_components", []),
+                    *(by_path.get(e["path"], "") for e in f.get("evidence", []))} - {""}
+        if f["component"] not in ids or involved & dirty:
+            dropped += 1
+            continue
+        keep = {k: v for k, v in f.items() if k not in ("shard_id", "finding_id", "verification")}
+        keep["carried_from"] = {"run": prev_root.name, "finding_id": f["finding_id"]}
+        carried.append(keep)
+        v = prev_verdicts.get(f["finding_id"])
+        if v:   # validate_findings.py numbers carried findings carried#1, carried#2, ... in this order
+            write_json(run.path("findings", "verdicts", f"carried__{len(carried)}.json"),
+                       {**v, "finding_id": f"carried#{len(carried)}"})
+    write_json(run.path("findings", "raw", "carried.json"),
+               {"shard_id": "carried", "findings": carried,
+                "coverage": {"components_reviewed": [], "skipped": []}, "follow_up": []})
+    return {"carried": len(carried), "notCarried": dropped}
+
+
+def reviewer_context(run: Run, cfg: dict, shards: list[dict]) -> None:
+    """Tell each reviewer what scripts already reported and which patterns consultants keep rejecting."""
+    rules = (read_json(run.path("findings", "raw", "rules.json"), {}) or {}).get("findings", [])
+    fps = {area: library.false_positives(cfg, area) for area in {s["area"] for s in shards}}
+    for s in shards:
+        mine = set(s["components"]) | set(s.get("context_components", []))
+        reported = [{"title": f["title"], "components": sorted(mine & {f["component"], *f["related_components"]})}
+                    for f in rules if mine & {f["component"], *f["related_components"]}]
+        if reported:
+            s["context"]["alreadyReported"] = reported
+        if fps.get(s["area"]):
+            s["context"]["knownFalsePositives"] = fps[s["area"]]
+
+
 def main() -> int:
+    global MAX_ITEMS, DIRTY
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", required=True)
     ap.add_argument("--areas", default=",".join(PLANNERS))
     ap.add_argument("--config")
+    ap.add_argument("--baseline", default="none",
+                    help="auto = newest earlier run of the same client; or a run folder; none = full review")
     args = ap.parse_args()
     cfg = load_config(args.config)
     run = Run(Path(args.run))
     budget = cfg["shards"]["tokenBudget"]
-    global MAX_ITEMS
     MAX_ITEMS = cfg["shards"].get("maxComponents", MAX_ITEMS)
 
     with Timer() as t:
@@ -363,7 +450,30 @@ def main() -> int:
 
         for old in run.path("shards").glob("*.json"):
             old.unlink()
-        shards = [{**s, "planner": a} for a in areas for s in PLANNERS[a](items, automation, ev_by_path, budget)]
+        # Full plan first: it defines which areas this run assesses (incremental or not).
+        DIRTY = None
+        full = [{**s, "planner": a} for a in areas for s in PLANNERS[a](items, automation, ev_by_path, budget)]
+
+        prev_root = None
+        if args.baseline != "none" and (cfg.get("incremental") or {}).get("enabled", True):
+            prev_root = earlier_run(run) if args.baseline == "auto" else Path(args.baseline)
+        incremental = None
+        run.path("findings", "raw").mkdir(parents=True, exist_ok=True)
+        if prev_root and (prev_root / "index" / "inventory.json").exists():
+            DIRTY = changed_components(items, read_json(prev_root / "index" / "inventory.json", []))
+            if DIRTY is None:
+                info(f"INCREMENTAL: {prev_root.name} has no content hashes; doing a full review")
+        if DIRTY is not None:
+            shards = [{**s, "planner": a} for a in areas for s in PLANNERS[a](items, automation, ev_by_path, budget)]
+            incremental = {"baseline": prev_root.name, "changedComponents": len(DIRTY),
+                           "fullPlanShards": len(full), **carry_forward(run, prev_root, items, DIRTY)}
+        else:
+            shards = full
+            run.path("findings", "raw", "carried.json").unlink(missing_ok=True)
+            for old in run.path("findings", "verdicts").glob("carried__*.json"):
+                old.unlink()
+
+        reviewer_context(run, cfg, shards)
         for s in shards:
             s["sourceTokens"] = sum(f["tokens"] for f in s["files"])
             s["evidence"] = [{**e, "message": (e.get("message") or "")[:300]} for e in s["evidence"]]
@@ -374,6 +484,9 @@ def main() -> int:
         plan = {
             "areas": areas, "tokenBudget": budget, "shards": agents,
             "byArea": {a: sum(1 for s in shards if s.get("planner") == a) for a in areas},
+            # Areas this run assesses: from the full plan, so an unchanged area still counts (its findings carry forward).
+            "assessedByArea": {a: sum(1 for s in full if s.get("planner") == a) for a in areas},
+            "incremental": incremental,
             "largestShardTokens": max((s["sourceTokens"] for s in shards), default=0),
             "overBudget": [s["shard_id"] for s in shards if s["sourceTokens"] > budget],
             "estimate": {
@@ -386,7 +499,7 @@ def main() -> int:
         }
         write_json(run.path("shards", "plan.json"), plan)
 
-    run.log_step("plan-shards", "ok", t.seconds, **{k: plan[k] for k in ("shards", "byArea", "overBudget")})
+    run.log_step("plan-shards", "ok", t.seconds, **{k: plan[k] for k in ("shards", "byArea", "overBudget", "incremental")})
     info(json.dumps(plan, indent=2))
     return 0
 

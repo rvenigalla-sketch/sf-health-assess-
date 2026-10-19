@@ -71,12 +71,25 @@ def main() -> int:
         # Critical first, then High; within a severity, model-only observations before tool-confirmed ones.
         # Anything past verify.maxFindings stays "unverified" and is flagged in the consultant sheet.
         rank = lambda f: (f["severity"] != "Critical", f.get("basis") == "tool-confirmed")
-        serious = sorted((f for f in rows if f["severity"] in ("Critical", "High")), key=rank)
+        # Skipped: script-made rule findings, and findings carried forward with last run's verdict.
+        have = {v.get("finding_id") for v in (read_json(x) for x in run.path("findings", "verdicts").glob("*.json")) if v}
+        serious = sorted((f for f in rows if f["severity"] in ("Critical", "High")
+                          and f.get("basis") != "deterministic" and f["finding_id"] not in have), key=rank)
         cap = int((cfg.get("verify") or {}).get("maxFindings", 60))
         if len(serious) > cap:
             print(f"VERIFY: {len(serious)} High/Critical findings, verifying the first {cap}; "
                   f"{len(serious) - cap} stay unverified (raise verify.maxFindings to cover them)", file=sys.stderr)
-        out = {**base, "findings": [{"finding_id": f["finding_id"]} for f in serious[:cap]], **model_arg(cfg, "verifier")}
+        heavy = model_arg(cfg, "verifier").get("model")
+        light = model_arg(cfg, "verifierLight").get("model") or heavy
+
+        def pick(f):
+            # A High that a tool rule already flagged needs a lighter re-check than a model-only claim.
+            m = light if f["severity"] == "High" and f.get("basis") == "tool-confirmed" else heavy
+            return {"finding_id": f["finding_id"], **({"model": m} if m else {})}
+        chosen = [pick(f) for f in serious[:cap]]
+        print(f"VERIFY: {len(chosen)} finding(s); {sum(c.get('model') == light != heavy for c in chosen)} on {light}",
+              file=sys.stderr)
+        out = {**base, "findings": chosen, **model_arg(cfg, "verifier")}
     else:
         out = {**base, **model_arg(cfg, "synthesizer")}
     print(json.dumps(out))

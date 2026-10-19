@@ -143,10 +143,14 @@ class PipelineTest(unittest.TestCase):
         xlsx = self.run_dir / "review" / "findings_review.xlsx"
         wb = load_workbook(xlsx)
         ws = wb.active
-        ws.cell(2, 12).value = "Edit"
-        ws.cell(2, 13).value = "Medium"
+        from review_gate import EDITABLE_FROM
+        ws.cell(2, EDITABLE_FROM).value = "Edit"
+        ws.cell(2, EDITABLE_FROM + 1).value = "Medium"
         wb.save(xlsx)
-        run_script("review_gate.py", "import", "--run", self.run_dir)
+        # Library off: tests must never write to the user's real finding library.
+        no_lib = self.tmp / "no-library.yml"
+        no_lib.write_text("library:\n  enabled: false\n", encoding="utf-8")
+        run_script("review_gate.py", "import", "--run", self.run_dir, "--config", no_lib)
         accepted = json.loads((self.run_dir / "findings" / "accepted.json").read_text(encoding="utf-8"))
         self.assertEqual(accepted["findings"][0]["severity"], "Medium")
         self.assertEqual(accepted["findings"][0]["original_severity"], "High")
@@ -174,6 +178,121 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(s["areas"]["flow"]["rating"], "Not assessed")
         s = score_areas([f("Critical")], cfg, {"apex", "flow", "security", "automation"})
         self.assertNotEqual(s["overallRating"], "Good")
+
+
+CLASSES = Path("metadata/force-app/main/default/classes")
+
+
+def jsonl(path: Path) -> list[dict]:
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()] if path.exists() else []
+
+
+class Phase2Test(unittest.TestCase):
+    """Rule checks, incremental runs and the finding library (each test works on its own copy)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="sfhealth2-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def snapshot(self, date: str) -> Path:
+        run = self.tmp / "Fixture" / date
+        shutil.copytree(FIXTURE, run)
+        for sub in ("findings", "shards", "review", "report"):      # outputs from earlier pilots, if any
+            shutil.rmtree(run / sub, ignore_errors=True)
+        run_script("build_index.py", "--run", run)
+        return run
+
+    # ---------------- rule checks
+    def test_rule_checks_cover_planted_problems(self):
+        sys.path.insert(0, str(REPO / "tests"))
+        from eval import matches
+        run = self.snapshot("2026-01-01")
+        run_script("rule_checks.py", "--run", run)
+        run_script("validate_findings.py", "--run", run)
+        found = jsonl(run / "findings" / "validated.jsonl")
+        self.assertEqual(len(found), 3)
+        self.assertEqual(jsonl(run / "findings" / "rejected.jsonl"), [])
+        planted = {p["id"]: p for p in json.loads((REPO / "tests" / "fixtures" / "expected_findings.json")
+                                                  .read_text(encoding="utf-8"))["planted"]}
+        for pid in ("P13", "P14", "P15"):
+            self.assertTrue(any(matches(f, planted[pid]) for f in found), pid)
+        # Reviewers whose shard covers those components are told not to repeat them.
+        run_script("plan_shards.py", "--run", run)
+        flow_shards = [json.loads(p.read_text(encoding="utf-8")) for p in (run / "shards").glob("flow-*.json")]
+        self.assertTrue(any(s["context"].get("alreadyReported") for s in flow_shards))
+
+    # ---------------- incremental
+    def test_incremental_reviews_only_changes_and_carries_the_rest(self):
+        prev = self.snapshot("2026-01-01")
+        search = (prev / CLASSES / "InvoiceSearchController.cls").read_text(encoding="utf-8").splitlines()
+        line = next(n for n, l in enumerate(search, 1) if "without sharing" in l)
+        ev = lambda path, n, q: [{"path": path, "line_start": n, "line_end": n, "quote": q}]
+        base = {"area": "apex", "category": "security", "severity": "High", "evidence_ids": [], "basis": "llm-observation",
+                "confidence": "high", "impact": "x", "recommendation": "y", "effort": "S", "related_components": []}
+        (prev / "findings").mkdir(exist_ok=True)
+        (prev / "findings" / "validated.jsonl").write_text("\n".join(json.dumps(f) for f in [
+            {**base, "finding_id": "apex-01#1", "shard_id": "apex-01", "title": "Search runs without sharing",
+             "component": "ApexClass:InvoiceSearchController",
+             "evidence": ev((CLASSES / "InvoiceSearchController.cls").as_posix(), line, search[line - 1].strip())},
+            {**base, "finding_id": "apex-01#2", "shard_id": "apex-01", "title": "SOQL in loop",
+             "component": "ApexClass:InvoiceService",
+             "evidence": ev((CLASSES / "InvoiceService.cls").as_posix(), 1, "public class InvoiceService")},
+            {**base, "finding_id": "apex-02#1", "shard_id": "apex-02", "title": "Formatter quote no longer there",
+             "component": "ApexClass:CleanFormatter",
+             "evidence": ev((CLASSES / "CleanFormatter.cls").as_posix(), 1, "text that is not in the file")},
+        ]) + "\n", encoding="utf-8")
+        (prev / "findings" / "verdicts").mkdir()
+        (prev / "findings" / "verdicts" / "apex-01__1.json").write_text(json.dumps(
+            {"finding_id": "apex-01#1", "verdict": "confirmed", "corrected_severity": "High", "reason": "ok"}), encoding="utf-8")
+
+        cur = self.snapshot("2026-02-01")
+        svc = cur / CLASSES / "InvoiceService.cls"
+        svc.write_text(svc.read_text(encoding="utf-8") + "\n// changed\n", encoding="utf-8")
+        run_script("build_index.py", "--run", cur)
+        run_script("plan_shards.py", "--run", cur, "--baseline", "auto")
+
+        plan = json.loads((cur / "shards" / "plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(plan["incremental"]["baseline"], "2026-01-01")
+        self.assertLess(plan["shards"], plan["incremental"]["fullPlanShards"])
+        reviewed = {c for p in (cur / "shards").glob("*-*.json")
+                    for c in json.loads(p.read_text(encoding="utf-8")).get("components", [])}
+        self.assertIn("ApexClass:InvoiceService", reviewed)          # changed
+        self.assertIn("ApexTrigger:InvoiceTrigger", reviewed)        # calls the changed class
+        self.assertNotIn("ApexClass:InvoiceSearchController", reviewed)
+        carried = json.loads((cur / "findings" / "raw" / "carried.json").read_text(encoding="utf-8"))["findings"]
+        self.assertEqual([f["component"] for f in carried],
+                         ["ApexClass:InvoiceSearchController", "ApexClass:CleanFormatter"])
+        self.assertTrue((cur / "findings" / "verdicts" / "carried__1.json").exists())
+        self.assertTrue(assessed_areas(Run(cur)) >= {"apex", "flow"})   # unchanged areas still count
+
+        run_script("validate_findings.py", "--run", cur)
+        ok = {f["finding_id"] for f in jsonl(cur / "findings" / "validated.jsonl")}
+        bad = {f["finding_id"] for f in jsonl(cur / "findings" / "rejected.jsonl")}
+        self.assertIn("carried#1", ok)
+        self.assertIn("carried#2", bad)                              # stale quote is caught, not carried blindly
+        args = json.loads(run_script("workflow_args.py", "verify", "--run", cur).stdout)
+        self.assertNotIn("carried#1", {f["finding_id"] for f in args["findings"]})   # keeps last run's verdict
+
+    # ---------------- finding library
+    def test_library_strips_names_and_gives_hints(self):
+        import library
+        run = self.snapshot("2026-01-01")
+        cfg = load_config()
+        cfg["library"]["path"] = str(self.tmp / "lib.jsonl")
+        f = {"title": "InvoiceService runs SOQL on Invoice__c inside a loop (admin@fixture.com, Fixture)",
+             "area": "apex", "category": "performance", "severity": "High",
+             "recommendation": "Move the query in InvoiceService out of the loop", "basis": "llm-observation"}
+        library.record(Run(run), cfg, [(f, "rejected", "Fixture says InvoiceService is retired"),
+                                       (f, "rejected", "same")])
+        saved = (self.tmp / "lib.jsonl").read_text(encoding="utf-8")
+        for secret in ("InvoiceService", "Invoice__c", "admin@fixture.com", "Fixture"):
+            self.assertNotIn(secret, saved)
+        self.assertIn("<name>", saved)
+        hint = library.Hints(cfg, Run(run))({**f, "title": "InvoiceSearchController runs SOQL on Invoice__c inside a loop"})
+        self.assertTrue(hint.startswith("Seen 2x before"), hint)
+        self.assertEqual(len(library.false_positives(cfg, "apex")), 1)
 
 
 if __name__ == "__main__":

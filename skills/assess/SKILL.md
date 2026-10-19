@@ -37,8 +37,15 @@ stop, show its last lines and say what to do. Never skip a stage silently.
    Preflight problems stop the run; show them. Tool failures are logged and the run continues.
    Report which tools failed (from `RUN/run_log.json`).
 2. **Index**: `build_index.py --run RUN [--config C]`
-3. **Plan**: `plan_shards.py --run RUN [--areas ...] [--config C]`
-   Show the user the plan: shards per area, estimated review tokens, and any over-budget shards.
+   Then **rule checks**: `rule_checks.py --run RUN [--config C]` (script-made findings, no Claude usage).
+3. **Plan**: `plan_shards.py --run RUN --baseline auto [--areas ...] [--config C]`
+   - `--baseline auto` reviews only what changed since this client's previous run and carries the
+     other findings forward. If there is no earlier run, it is a full review. Use `--baseline none`
+     when the user asks for a full re-review.
+   Show the user the plan: shards per area, estimated review tokens, any over-budget shards and,
+   for an incremental run, `incremental` (changed components, findings carried forward, full-plan shard count).
+   If it planned 0 shards (nothing changed), skip the review and follow-up workflows, but still run
+   `validate_findings.py --run RUN` (it checks the rule-check and carried-forward findings), then go on to stage 6.
    **Ask for a go-ahead before stage 4.** This is the first step that uses Claude usage
    (roughly 2–3× the review estimate for the whole run).
 4. **Review**:

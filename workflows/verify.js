@@ -7,7 +7,7 @@ export const meta = {
   ],
 }
 
-// args.findings: [{finding_id}] of validated High/Critical findings. Each verifier reads the full
+// args.findings: [{finding_id, model?}] of validated High/Critical findings. Each verifier reads the full
 // finding from findings/validated.jsonl itself, so the orchestrator never carries finding text.
 // Verdicts are extracted from the journal by scripts/extract_results.py --kind verify.
 
@@ -46,7 +46,7 @@ const verdicts = await pipeline(
     label: `verify:${f.finding_id}`,
     phase: 'Verify',
     schema: VERDICT,
-    ...(args.model ? { model: args.model } : {}),
+    ...((f.model || args.model) ? { model: f.model || args.model } : {}),   // per finding: lighter model for tool-confirmed High
     ...(args.useAgentTypes ? { agentType: 'sf-health:finding-verifier' } : {}),
   }),
 )
