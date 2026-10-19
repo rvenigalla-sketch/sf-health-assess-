@@ -12,6 +12,10 @@ Checks:
 Writes findings/raw/rules.json (shard_id "rules"). plan_shards.py passes these to reviewers as
 "already reported" so they don't raise them again.
 
+These checks OWN their topics (see "Topic ownership" in rubrics/common.md): the agent checklists no
+longer list them, and reviewers report only a specific, worse consequence. Keep the severities here
+(flow-no-fault-path Medium, old-api-version Low, public-read-write Medium) in step with that table.
+
 Usage:
   python rule_checks.py --run <run folder> [--config client.yml]
 """
@@ -22,7 +26,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from common import Run, Timer, info, load_config, read_json, write_json
+from common import Run, Timer, info, load_run_config, read_json, write_json
 
 MAX_EVIDENCE = 5
 
@@ -140,8 +144,8 @@ def main() -> int:
     ap.add_argument("--run", required=True)
     ap.add_argument("--config")
     args = ap.parse_args()
-    cfg = load_config(args.config)
     run = Run(Path(args.run))
+    cfg = load_run_config(run, args.config)
     out = run.path("findings", "raw", "rules.json")
     if not (cfg.get("ruleChecks") or {}).get("enabled", True):
         out.unlink(missing_ok=True)

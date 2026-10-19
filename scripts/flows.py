@@ -23,7 +23,9 @@ ELEMENT_TYPES = (
 )
 DML_TYPES = {"recordCreates", "recordUpdates", "recordDeletes"}
 QUERY_TYPES = {"recordLookups"}
-FAULTABLE = DML_TYPES | QUERY_TYPES | {"actionCalls", "apexPluginCalls", "subflows"}
+# Elements that can fail at run time and accept a faultConnector. Wait (pause) elements do too:
+# a resume can fail, and without a fault path the interview just errors out.
+FAULTABLE = DML_TYPES | QUERY_TYPES | {"actionCalls", "apexPluginCalls", "subflows", "waits"}
 
 
 def _t(el, path: str, default: str = "") -> str:
@@ -155,6 +157,23 @@ def parse_flow(path: Path) -> dict:
     fields_written: list[str] = []
     issues: list[str] = []
     lines: list[str] = []
+    before_save = facts["triggerType"] == "RecordBeforeSave"
+
+    # Record variables: name -> sObject type, and fields set on them by Assignment elements. An
+    # Update Records that saves the variable (inputReference) writes those fields.
+    var_types = {_t(v, "name"): _t(v, "objectType") for v in root.findall(NS + "variables")
+                 if _t(v, "dataType") == "SObject"}
+    assigned: dict[str, set[str]] = {}
+    for el in root.findall(NS + "assignments"):
+        for item in el.findall(NS + "assignmentItems"):
+            var, _, fld = _t(item, "assignToReference").partition(".")
+            if fld and "." not in fld:
+                assigned.setdefault(var, set()).add(fld)
+
+    def update_record_ref(etype, el) -> bool:
+        """'Update triggering record' in a before-save flow: not DML, can't take a fault path."""
+        return before_save and etype == "recordUpdates" and not _t(el, "object") \
+            and _t(el, "inputReference") == "$Record"
 
     for ename, info in elements.items():
         etype, el, targets = info["type"], info["el"], info["targets"]
@@ -165,8 +184,10 @@ def parse_flow(path: Path) -> dict:
             target = obj or (ref and "{!" + ref + "}")
             assigns = [_t(a, "field") for a in el.findall(NS + "inputAssignments")]
             if etype == "recordUpdates":
-                write_obj = obj or ("$Record" if ref.startswith("$Record") else ref)
+                write_obj = obj or ("$Record" if ref.startswith("$Record") else var_types.get(ref) or ref)
                 fields_written += [f"{write_obj}.{f}" for f in assigns if f]
+                if ref and not obj:
+                    fields_written += [f"{write_obj}.{f}" for f in sorted(assigned.get(ref, ()))]
             flt = _filters(el)
             detail = f"{target}" + (f" where {' AND '.join(flt)}" if flt else "")
             if assigns:
@@ -176,7 +197,7 @@ def parse_flow(path: Path) -> dict:
             for item in el.findall(NS + "assignmentItems"):
                 ref = _t(item, "assignToReference")
                 items.append(f"{ref} {_t(item, 'operator')} {_value(item.find(NS + 'value'))}")
-                if ref.startswith("$Record.") and facts["triggerType"] == "RecordBeforeSave":
+                if ref.startswith("$Record.") and before_save:
                     fields_written.append(f"$Record.{ref.split('.', 1)[1]}")
             detail = "; ".join(items)
         elif etype == "decisions":
@@ -200,11 +221,12 @@ def parse_flow(path: Path) -> dict:
         if ename in in_loop and (etype in DML_TYPES or etype in QUERY_TYPES or etype == "subflows"):
             flags.append(f"IN-LOOP:{in_loop[ename]}")
             issues.append(f"{etype} '{ename}' runs inside loop '{in_loop[ename]}'")
-        if etype in FAULTABLE and "fault" not in targets:
+        if etype in FAULTABLE and "fault" not in targets and not update_record_ref(etype, el):
             flags.append("NO-FAULT-PATH")
         lines.append(f"[{etype}] {ename}: {detail}  ({conn or 'end'})" + (f"  !{' !'.join(flags)}" if flags else ""))
 
-    no_fault = [n for n, i in elements.items() if i["type"] in FAULTABLE and "fault" not in i["targets"]]
+    no_fault = [n for n, i in elements.items() if i["type"] in FAULTABLE and "fault" not in i["targets"]
+                and not update_record_ref(i["type"], i["el"])]
     if no_fault:
         issues.append(f"{len(no_fault)} element(s) with no fault path: {', '.join(no_fault[:12])}")
 

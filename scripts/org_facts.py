@@ -18,9 +18,27 @@ from common import read_json
 SEP = " | "
 
 
-def _result(tools: Path, name: str):
+def tool_failed(data) -> bool:
+    """A saved `sf ... --json` payload that is an error rather than a result. collect.py saves the
+    whole payload: {"status": 0, "result": {...}} when the tool ran, {"status": 1, "name": ...,
+    "message": ...} (or {"error": ...} when nothing parseable came back) when it didn't. hardis exits
+    with status 1 when it FINDS issues, but then a result is present, so that still counts as ran."""
+    if not isinstance(data, dict):
+        return False
+    if "result" in data:
+        return data["result"] is None
+    return "status" in data or "error" in data or ("message" in data and "name" in data)
+
+
+def _result(tools: Path, name: str, failed: dict | None = None):
+    """The tool's result, or None when it wasn't run or failed. A failure is recorded in `failed`
+    so the area is reported as not assessed instead of as zero issues."""
     data = read_json(tools / name)
     if data is None:
+        return None
+    if tool_failed(data):
+        if failed is not None:
+            failed[name] = str(data.get("message") or data.get("error") or f"status {data.get('status')}")[:300]
         return None
     return data.get("result", data) if isinstance(data, dict) else data
 
@@ -36,10 +54,11 @@ def _write(out: Path, topic: str, title: str, header: list[str], rows: list[list
 def build_org_facts(tools: Path, out: Path) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     summary: dict = {}
+    failed: dict[str, str] = {}     # tool output file -> error, for tools that ran but failed
 
     # ---- Security Health Check
-    score = _result(tools, "healthcheck-score.json")
-    risks = _result(tools, "healthcheck-risks.json")
+    score = _result(tools, "healthcheck-score.json", failed)
+    risks = _result(tools, "healthcheck-risks.json", failed)
     if score and score.get("records"):
         summary["healthCheckScore"] = float(score["records"][0].get("Score") or 0)
     if risks and risks.get("records"):
@@ -52,7 +71,7 @@ def build_org_facts(tools: Path, out: Path) -> dict:
         summary["healthCheckRisks"] = dict(Counter(r.get("RiskType") for r in recs))
 
     # ---- Dangerous permissions (hardis unsecure-permissions): tier 0 = most dangerous
-    perms = _result(tools, "hardis-unsecure-permissions.json")
+    perms = _result(tools, "hardis-unsecure-permissions.json", failed)
     if perms and perms.get("profileGrants") is not None:
         grants = (perms.get("profileGrants") or []) + (perms.get("permSetGrants") or [])
         by_container = defaultdict(lambda: {"type": "", "tiers": Counter(), "top": set()})
@@ -84,7 +103,7 @@ def build_org_facts(tools: Path, out: Path) -> dict:
         summary["containersWithTier0"] = sum(1 for c in by_container.values() if c["tiers"][0])
 
     # ---- Access hygiene
-    ups = _result(tools, "hardis-underusedpermsets.json")
+    ups = _result(tools, "hardis-underusedpermsets.json", failed)
     if ups:
         rows = [[p.get("Name"), p.get("Type"), p.get("UserCount")]
                 for k in ("zeroUserPermSets", "limitedUserPermSets", "zeroUserPermSetGroups", "limitedUserPermSetGroups")
@@ -92,8 +111,8 @@ def build_org_facts(tools: Path, out: Path) -> dict:
         _write(out, "underused_permsets", "Permission sets / groups with 0 or few users (hardis)",
                ["Name", "Type", "Users"], rows)
         summary["underusedPermissionSets"] = len(rows)
-    uu = _result(tools, "hardis-unusedusers.json")
-    ul = _result(tools, "hardis-unusedlicenses.json")
+    uu = _result(tools, "hardis-unusedusers.json", failed)
+    ul = _result(tools, "hardis-unusedlicenses.json", failed)
     rows = [[u.get("Username"), u.get("Profile.Name"), u.get("LastLoginDate") or "never", "inactive login"]
             for u in (uu or {}).get("users") or []]
     rows += [[l.get("User"), l.get("PermissionsSetLicense"), "", l.get("Reason")]
@@ -104,7 +123,7 @@ def build_org_facts(tools: Path, out: Path) -> dict:
         summary["unusedUsersOrLicenses"] = len(rows)
 
     # ---- Connected apps / OAuth
-    ca = _result(tools, "hardis-unsecure-connected-apps.json")
+    ca = _result(tools, "hardis-unsecure-connected-apps.json", failed)
     if ca:
         tokens = ca.get("unsecuredOAuthTokens") or []
         by_app = Counter(t.get("AppName") for t in tokens)
@@ -116,14 +135,14 @@ def build_org_facts(tools: Path, out: Path) -> dict:
         summary["unsecuredConnectedApps"] = len(by_app)
 
     # ---- Release readiness
-    ru = _result(tools, "hardis-releaseupdates.json")
+    ru = _result(tools, "hardis-releaseupdates.json", failed)
     if ru:
         recs = sorted(ru.get("suspectRecords") or [], key=lambda r: r.get("DueDate") or "9999")
         _write(out, "release_updates", "Release updates not yet completed (hardis)",
                ["DueDate", "Status", "Category", "Title", "Release"],
                [[r.get("DueDate"), r.get("Status"), r.get("Category"), r.get("Title"), r.get("ReleaseLabel")] for r in recs])
         summary["pendingReleaseUpdates"] = len(recs)
-    la = _result(tools, "hardis-legacyapi.json")
+    la = _result(tools, "hardis-legacyapi.json", failed)
     if la:
         rows = [[",".join(map(str, r.get("apiFamily") or [])), r.get("minApiVersion"), r.get("maxApiVersion"),
                  r.get("severity"), r.get("deprecationRelease"), r.get("totalErrors")]
@@ -131,7 +150,7 @@ def build_org_facts(tools: Path, out: Path) -> dict:
         _write(out, "legacy_api", "Calls to retired / retiring API versions in event logs (hardis)",
                ["ApiFamily", "MinVersion", "MaxVersion", "Severity", "Retirement", "Calls"], rows)
         summary["legacyApiCalls"] = sum(int(r[-1] or 0) for r in rows)
-    ua = _result(tools, "hardis-unused-apex-classes.json")
+    ua = _result(tools, "hardis-unused-apex-classes.json", failed)
     if ua:
         _write(out, "unused_async_apex", "Async Apex classes with no recent jobs (hardis)",
                ["Class", "AsyncType", "LatestJobRunDays", "NextJob"],
@@ -139,7 +158,7 @@ def build_org_facts(tools: Path, out: Path) -> dict:
                 for c in ua.get("asyncClassList") or []])
 
     # ---- Org limits (only those above 50%)
-    lim = _result(tools, "hardis-limits.json")
+    lim = _result(tools, "hardis-limits.json", failed)
     if lim and lim.get("limitEntries"):
         high = sorted((l for l in lim["limitEntries"] if (l.get("percentUsed") or 0) >= 50), key=lambda l: -l["percentUsed"])
         _write(out, "limits", "Org limits at 50% or more (hardis)", ["Limit", "Used", "Max", "PercentUsed"],
@@ -147,7 +166,7 @@ def build_org_facts(tools: Path, out: Path) -> dict:
         summary["limitsAbove50Pct"] = len(high)
 
     # ---- Runtime errors (already redacted at collection): grouped, not one row per interview
-    errs = _result(tools, "hardis-errors.json")
+    errs = _result(tools, "hardis-errors.json", failed)
     if errs:
         groups = Counter()
         first_last = {}
@@ -165,4 +184,7 @@ def build_org_facts(tools: Path, out: Path) -> dict:
         summary["runtimeErrors"] = sum(groups.values())
         summary["runtimeErrorGroups"] = len(groups)
 
+    if failed:
+        # Failed tools leave their metrics absent (not 0): "no data" must not read as "no issues".
+        summary["notAssessed"] = failed
     return summary

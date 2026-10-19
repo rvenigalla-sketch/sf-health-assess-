@@ -18,8 +18,11 @@ run commands, read their one-line summaries, and report progress.
 - Run every script as `python "$PLUGIN/scripts/<script>.py" ...` from the user's working directory.
   Runs are written to `./health-runs/<Client>/<date>/` (config `workspaceRoot`).
 - `RUN` = the run folder printed by collect.py (`{"run": "..."}`).
-- Pass `--config <file>` to every script when the user gave one, e.g. a client file with
-  `dataPolicy: metadata-only` for clients promised "metadata only".
+- Client config: when the user gave one (e.g. a client file with `dataPolicy: metadata-only` for
+  clients promised "metadata only"), pass `--config <file>` at the first step, collect. The scripts
+  save it as `RUN/client-config.yml` and reuse it in every later step of that run, so later steps may
+  omit `--config`. Passing `--config` again replaces the saved copy; only do that if the user asks.
+  On `--from` resumes the saved copy is used automatically.
 
 Before starting, confirm with the user in one message:
 - the org alias and client name
@@ -36,9 +39,11 @@ stop, show its last lines and say what to do. Never skip a stage silently.
 1. **Collect**: `collect.py --org "<alias>" --client "<Client>" [--date D] [--config C]`
    Preflight problems stop the run; show them. Tool failures are logged and the run continues.
    Report which tools failed (from `RUN/run_log.json`).
-2. **Index**: `build_index.py --run RUN [--config C]`
-   Then **rule checks**: `rule_checks.py --run RUN [--config C]` (script-made findings, no Claude usage).
-3. **Plan**: `plan_shards.py --run RUN --baseline none [--areas ...] [--config C]`
+2. **Index**: `build_index.py --run RUN`
+   Then **rule checks**: `rule_checks.py --run RUN` (script-made findings, no Claude usage).
+3. **Plan**: `plan_shards.py --run RUN --baseline none [--areas ...]`
+   - Planning clears this run's stale raw reviewer findings and verifier verdicts from any earlier
+     attempt, so a re-run of the same run folder starts the review, follow-up and verify stages clean.
    - Default is a **full review**. Always use it for any assessment that goes to a client.
    - Only if the user explicitly asks for a quick interim re-check of an org assessed before, use
      `--baseline auto`. It reviews only what changed since the previous run, plus anything that
@@ -61,6 +66,9 @@ stop, show its last lines and say what to do. Never skip a stage silently.
    - `validate_findings.py --run RUN`
    - Report: findings passed / rejected, and any shard without output. If shards have no output,
      resume the same workflow (`resumeFromRunId`) once, extract again and re-validate.
+   - If the workflow fails with "sf-health requires its read-only agent types", stop: the plugin is not
+     installed (or `models.useAgentTypes` is false). Tell the user; never work around it.
+   - If the result's `idFixes` is non-empty, an agent returned the wrong id; tell the user which ones.
 5. **Follow-up** (one round only):
    - `plan_followups.py --run RUN`. If it planned 0 shards, skip to stage 6.
    - Otherwise `workflow_args.py followup --run RUN`, run `review.js` (inline, as above) with those args, extract with
@@ -71,14 +79,17 @@ stop, show its last lines and say what to do. Never skip a stage silently.
 7. **Score and compare**: `score.py --run RUN`, then `diff_baseline.py --run RUN --auto`.
 8. **Consultant review sheet**: `review_gate.py export --run RUN`
    Tell the user where `RUN/review/findings_review.xlsx` is. Ask them to set Accept / Reject / Edit
-   for every row, then run `/sf-health:finalize <RUN>`.
+   for every row, then run `/sf-health:finalize <RUN>`. **Stop here.** Do not finalize or accept
+   findings on the consultant's behalf.
    Also give a short summary from `score.py`'s output line: counts by severity, refuted count and the provisional overall score.
 
 ## Resuming
 
 `--from <stage>` (index, plan, review, followup, verify, score, gate) starts from that stage on an
-existing run (pass `--date` to reuse the folder). Collection is never repeated unless asked: a new
-retrieve means a new snapshot.
+existing run (pass `--date` to reuse the folder). The run's saved `client-config.yml` is reused,
+so `--config` is not needed. Collection is never repeated unless asked: a new retrieve means a new
+snapshot. Re-running from `plan` (or earlier) re-plans and clears stale raw findings and verdicts, so
+the review, follow-up and verify stages run again in full; the go-ahead before stage 4 still applies.
 
 ## Rules
 

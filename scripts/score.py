@@ -25,7 +25,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from common import Run, Timer, info, load_config, read_json, write_json
+from common import Run, Timer, info, load_run_config, read_json, write_json
 
 SEV_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 AREA_LABELS = {
@@ -43,6 +43,22 @@ def fingerprint(f: dict) -> str:
     words = re.findall(r"[a-z0-9_]+", f["title"].lower())
     gist = " ".join(w for w in words if len(w) > 3)[:60]
     return hashlib.sha1(f"{f['component']}|{f['category']}|{gist}".encode()).hexdigest()[:12]
+
+
+def content_fingerprint(f: dict) -> str:
+    """Binds a verifier verdict to the finding it judged: component + category + title + evidence quotes.
+    Finding ids are positional ({shard}#{n}), so an id alone can point at a different finding after a re-run."""
+    quotes = "\x1f".join(" ".join((e.get("quote") or "").split()) for e in f.get("evidence") or [])
+    text = "\x1e".join([f.get("component") or "", f.get("category") or "", (f.get("title") or "").strip(), quotes])
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+def verdict_matches(v: dict, f: dict) -> bool:
+    return bool(v.get("fingerprint")) and v["fingerprint"] == content_fingerprint(f)
+
+
+def warn(msg: str) -> None:
+    print(f"SCORE WARNING: {msg}", file=sys.stderr)
 
 
 def evidence_key(f: dict) -> frozenset:
@@ -63,14 +79,16 @@ def merge(into: dict, other: dict) -> None:
 
 
 def dedupe(findings: list[dict]) -> list[dict]:
-    """Same component + category with overlapping evidence, or the same tool evidence ids -> one finding."""
+    """Same component + category with overlapping evidence or the same tool evidence ids -> one finding.
+    Different components (or categories) are never merged, even when they cite the same tool evidence."""
     findings = sorted(findings, key=lambda f: (SEV_ORDER[f["severity"]], f["finding_id"]))
     kept: list[dict] = []
     for f in findings:
         for k in kept:
-            same_place = k["component"] == f["component"] and k["category"] == f["category"] \
-                and (evidence_key(k) & evidence_key(f))
-            same_tool = f["evidence_ids"] and set(f["evidence_ids"]) <= set(k["evidence_ids"])
+            if k["component"] != f["component"] or k["category"] != f["category"]:
+                continue
+            same_place = bool(evidence_key(k) & evidence_key(f))
+            same_tool = bool(f["evidence_ids"]) and set(f["evidence_ids"]) <= set(k["evidence_ids"])
             if same_place or same_tool:
                 merge(k, f)
                 break
@@ -92,7 +110,10 @@ def assessed_areas(run: Run) -> set[str]:
     """Areas that had at least one review shard. Integration counts only if the org has integration metadata."""
     plan = read_json(run.path("shards", "plan.json"), {})
     if not plan:
-        return set(AREA_LABELS)
+        # Without a plan nothing proves an area was reviewed; counting every area as assessed would
+        # report clean 100s for areas nobody looked at. Areas with findings are still scored.
+        warn("shards/plan.json missing: no area counts as assessed (only areas with findings are scored)")
+        return set()
     # assessedByArea: the full plan, so an area skipped by an incremental run (nothing changed) still counts.
     by_area = plan.get("assessedByArea") or plan.get("byArea") or {}
     areas = set().union(*(PLANNER_AREAS.get(a, set()) for a in plan.get("areas", []) if by_area.get(a, 1) > 0))
@@ -140,15 +161,20 @@ def main() -> int:
     ap.add_argument("--run", required=True)
     ap.add_argument("--config")
     args = ap.parse_args()
-    cfg = load_config(args.config)
     run = Run(Path(args.run))
+    cfg = load_run_config(run, args.config)
 
     with Timer() as t:
         findings = load_jsonl(run.path("findings", "validated.jsonl"))
-        verdicts = {v["finding_id"]: v for v in (read_json(p) for p in run.path("findings", "verdicts").glob("*.json")) if v}
+        verdicts = {v["finding_id"]: v for v in (read_json(p) for p in run.path("findings", "verdicts").glob("*.json"))
+                    if isinstance(v, dict) and "finding_id" in v}
         refuted, kept = [], []
         for f in findings:
             v = verdicts.get(f["finding_id"])
+            if v and not verdict_matches(v, f):
+                warn(f"verdict for {f['finding_id']} was given for different finding content (stale from an "
+                     "earlier attempt); ignoring it")
+                v = None
             if f.get("basis") == "deterministic":
                 f["verification"] = {"verdict": "rule check", "reason": "computed by a script from the metadata; not an AI finding"}
             elif v:
@@ -157,8 +183,15 @@ def main() -> int:
                     refuted.append(f)
                     continue
                 if v["verdict"] == "downgraded":
-                    f["original_severity"] = f["severity"]
-                    f["severity"] = v["corrected_severity"]
+                    new = v.get("corrected_severity")
+                    if new in SEV_ORDER and SEV_ORDER[new] > SEV_ORDER[f["severity"]]:
+                        f["original_severity"] = f["severity"]
+                        f["severity"] = new
+                    else:
+                        warn(f"{f['finding_id']}: 'downgraded' to {new!r} is not lower than {f['severity']}; "
+                             "treated as confirmed")
+                        f["verification"]["verdict"] = "confirmed"
+                # "confirmed" keeps the reviewer's severity even if corrected_severity differs.
             elif f["severity"] in ("Critical", "High"):
                 f["verification"] = {"verdict": "unverified", "reason": "no verifier output"}
             kept.append(f)

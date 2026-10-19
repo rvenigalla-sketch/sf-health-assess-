@@ -15,6 +15,11 @@ retrieve:
   chunkSize: 2000
   waitMinutes: 33
   retries: 2
+  # Profiles and permission sets only carry field/object/class access for components in the same
+  # retrieve, so they are fetched in a separate pass: this many per chunk, together with the related
+  # types (split into groups of at most accessRelatedChunkSize members; defaults to chunkSize).
+  accessChunkSize: 25
+  accessRelatedChunkSize: 2000
   # Retrieve chunks run at the same time (each into its own staging folder, merged afterwards).
   # Same files and API calls as one at a time, just overlapped. 1 = one after another.
   parallel: 2
@@ -30,6 +35,9 @@ retrieve:
     - Translations
     - CustomObjectTranslation
     - StandardValueSetTranslation
+    # Listed by the manifest but not retrievable in most orgs (retrieve reports "not available").
+    - UiViewDefinition
+    - WorkflowFlowAutomation
   # Skip components in installed managed-package namespaces (not changeable by the client).
   excludeManagedPackages: true
   # Warn and stop if remaining daily API requests fall below this share.
@@ -108,9 +116,14 @@ scoring:
   areaWeights: {security: 1.5, automation: 1.25, apex: 1, flow: 1, datamodel: 0.75, crma: 0.75, release: 0.75, integration: 0.75}
 
 models:
-  # true once sf-health is installed as a plugin: reviewers then run as the plugin's subagent types,
-  # which Claude Code restricts to Read/Grep/Glob. false: default workflow agents told to stay read-only.
-  useAgentTypes: false
+  # true (required): reviewers, verifiers and the synthesizer run as the plugin's subagent types
+  # (sf-health:<name>), which Claude Code restricts to the tools in agents/*.md frontmatter (Read/Grep/Glob).
+  # Needs sf-health installed as a plugin. The workflows refuse to run with false unless
+  # allowUnrestrictedAgents is also true.
+  useAgentTypes: true
+  # DEV ONLY, never for a client org: with useAgentTypes false, run default workflow agents (which have
+  # Bash/Write/Edit) and rely on the prompt alone to keep them read-only. Logs a loud warning.
+  allowUnrestrictedAgents: false
   reviewer: sonnet
   verifier: opus
   # Model for re-checking High findings a tool rule already flagged. Default opus: accuracy first.

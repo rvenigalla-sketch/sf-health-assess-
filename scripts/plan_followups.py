@@ -17,9 +17,18 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from common import Run, Timer, info, load_config, read_json, write_json
+from common import Run, Timer, info, load_run_config, read_json, write_json
 
 SEV_RANK = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+
+
+def sev_rank(f, source: str) -> int:
+    """Severity weight of a raw finding; anything outside the enum counts as Low (with a warning)."""
+    sev = f.get("severity") if isinstance(f, dict) else None
+    if sev not in SEV_RANK:
+        print(f"FOLLOW-UP WARNING: {source}: finding with invalid severity {sev!r} counted as Low", file=sys.stderr)
+        return 1
+    return SEV_RANK[sev]
 
 
 def main() -> int:
@@ -27,8 +36,8 @@ def main() -> int:
     ap.add_argument("--run", required=True)
     ap.add_argument("--config")
     args = ap.parse_args()
-    cfg = load_config(args.config)
     run = Run(Path(args.run))
+    cfg = load_run_config(run, args.config)
     cap = cfg["followUp"]["maxAgents"]
 
     with Timer() as t:
@@ -38,19 +47,24 @@ def main() -> int:
             if raw.stem.startswith("followup-"):
                 continue                                  # one round only
             out = read_json(raw) or {}
-            worst = max((SEV_RANK[f["severity"]] for f in out.get("findings", [])), default=1)
-            for lead in out.get("follow_up", []):
-                comp = lead.get("component")
-                if comp not in idx:
+            if not isinstance(out, dict):
+                continue
+            worst = max((sev_rank(f, raw.name) for f in out.get("findings") or []), default=1)
+            for lead in out.get("follow_up") or []:
+                comp = lead.get("component") if isinstance(lead, dict) else None
+                if not isinstance(comp, str) or comp not in idx:
                     continue                              # invented or unknown component: ignore
                 entry = leads[comp]
-                entry["reasons"].append(f"[{out.get('shard_id')}] {lead.get('reason', '')[:300]}")
+                entry["reasons"].append(f"[{out.get('shard_id')}] {str(lead.get('reason') or '')[:300]}")
                 entry["from"].add(out.get("shard_id"))
                 entry["weight"] += worst
         ranked = sorted(leads.items(), key=lambda kv: (-kv[1]["weight"], -len(kv[1]["from"]), kv[0]))
         chosen, dropped = ranked[:cap], ranked[cap:]
 
-        for old in run.path("shards").glob("followup-*.json"):
+        # Re-planning the follow-up round: drop the earlier round's shards and everything derived from
+        # them, so a stale followup-NN result or verdict can't attach to a new, different shard.
+        for old in [*run.path("shards").glob("followup-*.json"), *run.path("findings", "raw").glob("followup-*.json"),
+                    *run.path("findings", "verdicts").glob("followup-*.json")]:
             old.unlink()
         for n, (comp, lead) in enumerate(chosen, 1):
             item = idx[comp]

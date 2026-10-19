@@ -27,8 +27,9 @@ rejects or edits every finding before the client report is produced.
    /plugin marketplace add https://github.com/rvenigalla-sketch/sf-health-assess-.git
    /plugin install sf-health@a360-salesforce
    ```
-   Restart Claude Code. Then set `models.useAgentTypes: true` in your client config, so reviewers run
-   as the plugin's read-only subagents.
+   Restart Claude Code. The review, verify and summary workflows run every agent as one of the
+   plugin's subagent types, which Claude Code limits to Read/Grep/Glob (`models.useAgentTypes: true`,
+   the default), so the plugin must be installed. With `useAgentTypes: false` the workflows refuse to run.
 
 ## Run an assessment
 
@@ -59,15 +60,28 @@ Outputs in `<run>/report/`:
 - `report.docx`: client report
 - `baseline.xlsx`: findings, data model, security and access, user access, automation map
 
-Rough usage per run (calibrate from each run's `run_log.json`): small org (~500 components) about 4–6M
-tokens; large org (5,000+) about 30–40M tokens, possibly spread over usage-limit resets.
-The verifier (opus, ~40k tokens per finding) is usually the largest step; `verify.maxFindings` caps it.
+Usage scales with the amount of code and automation, not the component count: most components are
+fields. **Get the real figure for an org before spending anything:** collect, index and plan use no
+Claude usage, and the plan prints the reviewer count and review-token estimate.
+
+Rough guide (the review is about 68k tokens per reviewer agent; follow-up adds up to ~1M; verify adds up
+to ~2.4M, capped by `verify.maxFindings`):
+
+| Org | Review agents | Total tokens | Collect | AI stages |
+|---|---|---|---|---|
+| ~65 classes, 200 flows (a UAT sandbox with 5,100 components, as planned) | 25 | 4–5M | ~25 min | 30–45 min |
+| ~300 classes, 400 flows | 60–80 | 8–9M | 40–60 min | 1–1.5 h |
+| 1,000+ classes, 1,000+ flows | 150–200 | 14–18M | 1.5–2.5 h | 2–4 h |
+
+The rows below the first are extrapolations; recalibrate them from real runs' `run_log.json`. On a
+subscription a large run may pause at usage limits. Split it with `--areas` if needed.
 
 **Accuracy comes first in the defaults.** Every setting below that could trade accuracy for speed is
 off by default:
 - client assessments are always full reviews
 - every verifier is Opus
 - reviewers are never told to skip "known false positives"
+- every agent runs as a read-only plugin subagent type
 
 ### Repeat runs, rule checks and the finding library
 
@@ -87,7 +101,8 @@ off by default:
   saves every Accept / Edit / Reject decision with component, object, client and user names replaced
   by placeholders. The review sheet's **Library hint** column shows how similar findings were decided
   before, and your decision on the same finding last run. It is a hint for the consultant only.
-  Passing known false positives to reviewers (`library.warnReviewers`) is off by default.
+  Free-text consultant notes are kept only for the same client; they are not shown on other
+  clients' runs. Passing known false positives to reviewers (`library.warnReviewers`) is off by default.
   `python scripts/library.py stats` shows what it holds.
 - **Why no vector database.** An audit must look at every component, and vector search only returns the
   "most similar" pieces. The index is an exact map of what calls what, which is more reliable for
@@ -104,21 +119,23 @@ off by default:
 | Summary (opus) | 1 | 71k | 81 s |
 
 - **Quotes:** 31 of 31 findings passed the quote check; none were rejected.
-- **Accuracy:** recall 100% (15 of 15 planted problems found) and precision 100%. The clean class got no High or Critical findings.
+- **Accuracy:** recall 100% (15 of 15 planted problems found). The clean class got no High or Critical findings.
+  Precision was reported as 100%, but that was measured after three AI-found issues (P13–P15) were added
+  to the answer key. `tests/eval.py` now matches findings to key items one to one, including Low findings;
+  re-run it for a current precision figure.
 - **Verifier:** confirmed 11 findings, downgraded 6 and refuted 1. The refuted one was a recursion claim that couldn't happen, because the code crashes first. A follow-up finding had already reported that crash.
-- **Answer-key update:** three problems in the key (P13–P15) were real fixture issues that the AI found first; they were added to the key afterwards.
+- **Answer-key update:** P13–P15 were real fixture issues that the AI found first; they were added to the key afterwards.
 
 ## Client config
 
-Copy and edit, then pass with `--config`:
+Copy and edit, then pass with `--config` (needed once per run: it is saved as `<run>/client-config.yml`
+and reused by the later steps):
 
 ```yaml
 dataPolicy: metadata-only     # or full
 tools:
   orgCheck:
     acceptTerms: true         # Org Check's production-org acknowledgement; needed for production orgs
-models:
-  useAgentTypes: true         # once the plugin is installed
 ```
 
 - `full`: every tool, including the org-querying ones (Org Check, hardis, Security Health Check).
@@ -134,7 +151,10 @@ Other defaults (see `config/default.yml`):
 
 - Collection only retrieves and queries. Never: deploy, data writes, permission assignment, or
   `sf check run-all-tests` (that runs Apex tests in the org).
-- Reviewer agents are read-only, and are told to treat org files as data, not instructions.
+- Every agent (reviewers, verifier, summary) runs as a plugin subagent type limited to Read/Grep/Glob
+  (the summary agent: Read only), and is told org files are untrusted data, not instructions. The
+  workflows refuse to run with `models.useAgentTypes: false`. `models.allowUnrestrictedAgents: true` overrides
+  that for development only, with a warning; never use it on a client org.
 - Client data stays in `health-runs/` (git-ignored). Never commit a run folder.
 - The finding library stores patterns only (names replaced), on the consultant's own machine.
   Set `library.enabled: false` in a client config if a client contract rules out even that.

@@ -8,8 +8,15 @@ Outputs: report/report.html            interactive dashboard (open locally, or a
          report/report.docx            client report (structure of the A360 sample report)
          report/baseline.xlsx          baseline workbook: findings, data model, security and access, user access, automation
 
+The summary (findings/sf-health-synthesis.json) must match the current accepted findings: render stops
+(exit 2) if it cites a finding that isn't accepted, or was written before the review decisions last
+changed. Re-run the summary, or pass --allow-stale-synthesis to render anyway (citations of findings
+that aren't accepted are then dropped and reported as warnings).
+
+The client config saved in the run folder is reused (score thresholds).
+
 Usage:
-  python render.py --run <run> [--client "Display Name"] [--formats html,docx,xlsx]
+  python render.py --run <run> [--client "Display Name"] [--formats html,docx,xlsx] [--allow-stale-synthesis]
 """
 
 from __future__ import annotations
@@ -20,14 +27,54 @@ import re
 import sys
 from pathlib import Path
 
-from common import PLUGIN_ROOT, Run, Timer, info, load_config, read_json
+from common import PLUGIN_ROOT, Run, Timer, info, load_run_config, read_json
+from review_gate import xl_append
 from diff_baseline import METRIC_PATHS, dig
 
 SEVS = ["Critical", "High", "Medium", "Low"]
 
 
 # --------------------------------------------------------------------------- shared model
-def load_model(run: Run, client: str | None) -> dict:
+class StaleSynthesis(Exception):
+    pass
+
+
+def check_synthesis(run: Run, synthesis: dict, accepted: dict) -> list[str]:
+    """Reasons the summary doesn't belong to the current accepted findings (empty = fine)."""
+    if not synthesis:
+        return []
+    ids = {f["id"] for f in accepted["findings"]}
+    road = synthesis.get("roadmap", {})
+    cited = [i for k in ("quick_wins", "short_term", "long_term") for it in road.get(k, []) for i in it.get("finding_ids", [])]
+    cited += [i for r in (synthesis.get("executive_summary") or {}).get("top_recommendations", [])
+              for i in r.get("finding_ids", [])]
+    out = []
+    unknown = sorted(set(cited) - ids)
+    if unknown:
+        out.append(f"summary cites finding ids that are not accepted: {unknown[:10]}")
+    rev = accepted.get("review", {})
+    if synthesis.get("acceptedHash") and rev.get("acceptedHash") and synthesis["acceptedHash"] != rev["acceptedHash"]:
+        out.append("summary was written for a different set of accepted findings")
+    changed = rev.get("acceptedChangedAt")
+    syn_path = run.path("findings", "sf-health-synthesis.json")
+    if changed and syn_path.exists() and syn_path.stat().st_mtime < float(changed):
+        out.append("summary is older than the latest change to the accepted findings (review_gate.py import ran after it)")
+    return out
+
+
+def keep_accepted(synthesis: dict, ids: set) -> None:
+    """Drop citations of findings that are not accepted (roadmap items left with none are removed)."""
+    road = synthesis.get("roadmap", {})
+    for k in ("quick_wins", "short_term", "long_term"):
+        if k in road:
+            for it in road[k]:
+                it["finding_ids"] = [i for i in it.get("finding_ids", []) if i in ids]
+            road[k] = [it for it in road[k] if it["finding_ids"]]
+    for r in (synthesis.get("executive_summary") or {}).get("top_recommendations", []):
+        r["finding_ids"] = [i for i in r.get("finding_ids", []) if i in ids]
+
+
+def load_model(run: Run, client: str | None, cfg: dict | None = None, allow_stale: bool = False) -> dict:
     accepted = read_json(run.path("findings", "accepted.json"))
     if not accepted:
         raise SystemExit("findings/accepted.json missing: run review_gate.py import (or accept-all for a draft)")
@@ -39,15 +86,16 @@ def load_model(run: Run, client: str | None) -> dict:
     org = next((s.get("org") for s in log.get("steps", []) if s.get("step") == "preflight" and s.get("org")), {}) or {}
     diff = read_json(run.path("findings", "baseline_diff.json"), {}) or {}
     ids = {f["id"] for f in accepted["findings"]}
+    cfg = cfg or load_run_config(run)
 
-    # Synthesis may only cite accepted findings; report what it got wrong instead of hiding it.
-    problems = []
+    # The summary may only describe the accepted findings it was written from.
+    problems = check_synthesis(run, synthesis, accepted)
+    if problems and not allow_stale:
+        raise StaleSynthesis("; ".join(problems))
+    keep_accepted(synthesis, ids)
     road = synthesis.get("roadmap", {})
     cited = [i for k in ("quick_wins", "short_term", "long_term") for it in road.get(k, []) for i in it["finding_ids"]]
-    unknown = sorted(set(cited) - ids)
     unplaced = sorted(ids - set(cited))
-    if unknown:
-        problems.append(f"synthesis cites unknown finding ids: {unknown[:10]}")
     if synthesis and unplaced:
         problems.append(f"{len(unplaced)} accepted finding(s) not placed in the roadmap: {unplaced[:10]}")
     if synthesis and unplaced:
@@ -66,7 +114,7 @@ def load_model(run: Run, client: str | None) -> dict:
                  "scope": scope},
         "findings": accepted["findings"], "scores": accepted["scores"], "review": accepted.get("review", {}),
         "synthesis": synthesis, "automation": automation, "facts": facts,
-        "thresholds": {k: load_config()["scoring"][k] for k in ("good", "fair")},
+        "thresholds": {k: cfg["scoring"][k] for k in ("good", "fair")},
         "baseline": diff if diff.get("previous") else None, "problems": problems,
     }
 
@@ -87,10 +135,19 @@ def logo_svg() -> str:
     return svg
 
 
+def script_json(obj) -> str:
+    """JSON safe to embed in a <script> element: no <, > or & survives, so org text can't open a tag or
+    a comment ('<!--<script' would blank the page) or end the script. U+2028/2029 are escaped too."""
+    data = json.dumps(obj, ensure_ascii=False)
+    for ch, code in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"),
+                     ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
+        data = data.replace(ch, code)
+    return data
+
+
 def render_html(model: dict, out_dir: Path) -> list[Path]:
     template = (PLUGIN_ROOT / "templates" / "report.html").read_text(encoding="utf-8")
-    data = json.dumps({k: v for k, v in model.items() if k != "problems"}, ensure_ascii=False)
-    data = data.replace("</", "<\\/")                     # keep the JSON inside its <script>
+    data = script_json({k: v for k, v in model.items() if k != "problems"})
     title = f"{model['meta']['client']} Org Health"
     page = (template.replace("__TITLE__", title.replace("<", "")).replace("__A360_LOGO__", logo_svg())
             .replace("__REPORT_DATA__", data))
@@ -140,6 +197,7 @@ def render_docx(model: dict, out_dir: Path) -> Path:
         return t
 
     m, sc, syn = model["meta"], model["scores"], model["synthesis"]
+    accepted_ids = {f["id"] for f in model["findings"]}
     ex = syn.get("executive_summary", {})
     doc.add_heading(f"{m['client']} – Salesforce Org Health Assessment", level=0)
     p = doc.add_paragraph(f"Assessment date: {m['date']}")
@@ -159,7 +217,8 @@ def render_docx(model: dict, out_dir: Path) -> Path:
     if ex.get("top_recommendations"):
         doc.add_paragraph().add_run("Top recommendations").bold = True
         for r in ex["top_recommendations"]:
-            doc.add_paragraph(f"{r['text']} ({', '.join(r.get('finding_ids', []))})", style="List Number")
+            fids = [i for i in r.get("finding_ids", []) if i in accepted_ids]
+            doc.add_paragraph(r["text"] + (f" ({', '.join(fids)})" if fids else ""), style="List Number")
 
     doc.add_heading("2. Scope", level=1)
     doc.add_paragraph("A360 reviewed a read-only copy of the org's metadata, retrieved with the Salesforce CLI"
@@ -205,9 +264,10 @@ def render_docx(model: dict, out_dir: Path) -> Path:
         if not items:
             doc.add_paragraph("Nothing in this phase.")
         for it in items:
+            fids = [i for i in it["finding_ids"] if i in accepted_ids]
             para = doc.add_paragraph(style="List Bullet")
             para.add_run(it["title"]).bold = True
-            para.add_run(f" ({', '.join(it['finding_ids'])}; effort {it['effort']}). {it['why']}")
+            para.add_run(f" ({', '.join(fids) + '; ' if fids else ''}effort {it['effort']}). {it['why']}")
 
     doc.add_heading("7. Baseline and severity definitions", level=1)
     doc.add_paragraph("This report, the automation map and the metadata snapshot are the baseline for future "
@@ -246,12 +306,12 @@ def render_xlsx(model: dict, run: Run, out_dir: Path) -> Path:
 
     def sheet(name, headers, rows, widths=None):
         ws = wb.create_sheet(name[:31])
-        ws.append(headers)
+        xl_append(ws, headers)
         for c in ws[1]:
             c.font = Font(bold=True)
             c.fill = PatternFill("solid", fgColor="E9EDF1")
         for r in rows:
-            ws.append(r)
+            xl_append(ws, r)
         for i, h in enumerate(headers, 1):
             ws.column_dimensions[ws.cell(1, i).column_letter].width = (widths or {}).get(h, min(60, max(12, len(h) + 4)))
         ws.freeze_panes = "A2"
@@ -307,12 +367,22 @@ def main() -> int:
     ap.add_argument("--run", required=True)
     ap.add_argument("--client", help="client display name for the report (default: run folder's client)")
     ap.add_argument("--formats", default="html,docx,xlsx")
+    ap.add_argument("--allow-stale-synthesis", action="store_true",
+                    help="render even if the summary doesn't match the accepted findings (drops unknown ids)")
+    ap.add_argument("--config", help="client config (default: the copy saved in the run folder)")
     args = ap.parse_args()
     run = Run(Path(args.run))
     formats = {f.strip() for f in args.formats.split(",")}
+    cfg = load_run_config(run, args.config)
 
     with Timer() as t:
-        model = load_model(run, args.client)
+        try:
+            model = load_model(run, args.client, cfg, args.allow_stale_synthesis)
+        except StaleSynthesis as e:
+            info(f"RENDER: stale summary: {e}. Re-run the summary (finalize step 2), "
+                 "or pass --allow-stale-synthesis to render anyway.")
+            run.log_step("render", "failed", t.seconds, error=str(e))
+            return 2
         out_dir = run.path("report")
         written = []
         if "html" in formats:

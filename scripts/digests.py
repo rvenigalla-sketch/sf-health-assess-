@@ -169,27 +169,77 @@ USAGE_SOURCES = {
 }
 
 
+# Optional qualifier ("Case." / "Account__r." / "inv.") then a custom field or relationship name.
+FIELD_TOKEN = re.compile(r"(?:\b([A-Za-z][A-Za-z0-9_]*)\s*\.\s*)?\b([A-Za-z][A-Za-z0-9_]*__[cr])\b", re.I)
+
+
+def _usage_object(item: dict) -> str:
+    """The object a usage source belongs to, when its file is about one object."""
+    if item.get("object"):
+        return item["object"]
+    if item["type"] == "Layout" and "-" in item["name"]:
+        return item["name"].split("-", 1)[0]
+    if item["type"] == "quickActions" and "." in item["name"]:
+        return item["name"].split(".", 1)[0]
+    return ""
+
+
 def field_usage(items: list[dict], run_root: Path, out: Path) -> dict:
-    """Count, per custom field, which metadata types mention its API name."""
+    """Count, per custom field, which metadata types mention it.
+
+    Matching is case-insensitive (Apex and SOQL are), and X__r.<anything> counts as use of the lookup
+    X__c. A mention is attributed to one object when that can be told: an object qualifier
+    (Case.Status__c), a relationship qualifier whose lookup target is known (Account__r.Status__c),
+    or the object the file belongs to (trigger, record-triggered flow, validation rule, layout).
+    Otherwise it counts for every object that has a field of that name, so a shared name never makes
+    a used field look unreferenced."""
     out.mkdir(parents=True, exist_ok=True)
-    fields = [i for i in items if i["type"] == "CustomField" and i["name"].split(".")[-1].endswith("__c")]
-    names = {i["name"].split(".", 1)[1] for i in fields}
-    hits: dict[str, Counter] = defaultdict(Counter)
+    fields = [i for i in items if i["type"] == "CustomField" and i["name"].split(".")[-1].lower().endswith("__c")]
+    # field api name (lower) -> {object (lower)}; object lower -> object spelling
+    owners: dict[str, set[str]] = defaultdict(set)
+    rel_targets: dict[str, set[str]] = defaultdict(set)     # x__r -> {referenced object (lower)}
+    for f in fields:
+        api = f["name"].split(".", 1)[1].lower()
+        owners[api].add(f["object"].lower())
+        for target in filter(None, (f.get("referenceTo") or "").split(",")):
+            rel_targets[api[:-3] + "__r"].add(target.strip().lower())
+
+    hits: dict[tuple[str, str], Counter] = defaultdict(Counter)
     seen_paths = set()
-    token = re.compile(r"[A-Za-z][A-Za-z0-9_]*__c")
     for i in items:
         src = USAGE_SOURCES.get(i["type"])
         if not src or i["path"] in seen_paths:
             continue
         seen_paths.add(i["path"])
+        own_obj = _usage_object(i).lower()
+        self_key = (i["object"].lower(), i["name"].split(".", 1)[1].lower()) if src == "formula" else None
         p = run_root / i["path"]
         files = [p] if p.is_file() else [f for f in p.rglob("*") if f.is_file()]
         for f in files:
             text = f.read_text(encoding="utf-8", errors="replace")
-            for name in set(token.findall(text)) & names:
-                if src == "formula" and i["name"].split(".", 1)[1] == name:
-                    continue                      # a field's own definition
-                hits[name][src] += 1
+            found: set[tuple[str, str]] = set()
+            pairs = FIELD_TOKEN.findall(text)
+            # In Account__r.Status__c the qualifier is itself a use of the lookup Account__c.
+            pairs += [("", q) for q, _ in pairs if q.lower().endswith("__r")]
+            for qual, name in pairs:
+                api = name.lower()
+                if api.endswith("__r"):
+                    api = api[:-3] + "__c"            # Lookup__r.Name uses the lookup Lookup__c
+                candidates = owners.get(api)
+                if not candidates:
+                    continue
+                q = qual.lower()
+                if q in candidates:
+                    objs = {q}
+                elif q in rel_targets and rel_targets[q] & candidates:
+                    objs = rel_targets[q] & candidates
+                elif own_obj in candidates:
+                    objs = {own_obj}
+                else:
+                    objs = candidates
+                found |= {(o, api) for o in objs}
+            for key in found - {self_key}:            # a field's own definition is not a use
+                hits[key][src] += 1
     by_obj = defaultdict(list)
     for i in fields:
         by_obj[i["object"]].append(i)
@@ -198,7 +248,7 @@ def field_usage(items: list[dict], run_root: Path, out: Path) -> dict:
         rows = []
         for f in sorted(flds, key=lambda x: x["name"]):
             api = f["name"].split(".", 1)[1]
-            h = hits.get(api, Counter())
+            h = hits.get((obj.lower(), api.lower()), Counter())
             # Report types list every field of their objects, so they don't count as real use.
             total = sum(v for k, v in h.items() if k != "reportType")
             summary["unreferenced"] += total == 0

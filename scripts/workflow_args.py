@@ -18,9 +18,11 @@ import json
 import sys
 from pathlib import Path
 
-from common import PLUGIN_ROOT, Run, load_config, read_json
+from common import PLUGIN_ROOT, Run, load_run_config, read_json, write_json
+from score import content_fingerprint
 
 MODEL_ALIASES = {"sonnet", "opus", "haiku", "fable"}
+EXPECTED = "_expected.json"     # findings/verdicts/_expected.json: finding_id -> content fingerprint
 
 
 def model_arg(cfg: dict, role: str) -> dict:
@@ -55,14 +57,21 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.kind == "journal":
-        j = find_journal(args.run_id or "")
+        # Without a run id every journal path matches and the newest one (possibly another client's
+        # workflow) would be returned.
+        if not (args.run_id or "").strip():
+            ap.error("journal requires --run-id (the workflow's runId from the launch result)")
+        j = find_journal(args.run_id.strip())
         print(json.dumps({"journal": str(j) if j else None}))
         return 0 if j else 1
 
-    cfg = load_config(args.config)
+    if not args.run:
+        ap.error(f"{args.kind} requires --run")
     run = Run(Path(args.run))
+    cfg = load_run_config(run, args.config)
     base = {"run": str(run.root).replace("\\", "/"), "pluginRoot": str(PLUGIN_ROOT).replace("\\", "/"),
-            "useAgentTypes": bool((cfg.get("models") or {}).get("useAgentTypes"))}
+            "useAgentTypes": bool((cfg.get("models") or {}).get("useAgentTypes")),
+            "allowUnrestrictedAgents": bool((cfg.get("models") or {}).get("allowUnrestrictedAgents", False))}
     if args.kind in ("review", "followup"):
         out = {**base, "shards": shard_list(run, args.kind == "followup"), **model_arg(cfg, "reviewer")}
     elif args.kind == "verify":
@@ -72,9 +81,16 @@ def main() -> int:
         # Anything past verify.maxFindings stays "unverified" and is flagged in the consultant sheet.
         rank = lambda f: (f["severity"] != "Critical", f.get("basis") == "tool-confirmed")
         # Skipped: script-made rule findings, and findings carried forward with last run's verdict.
-        have = {v.get("finding_id") for v in (read_json(x) for x in run.path("findings", "verdicts").glob("*.json")) if v}
+        # A verdict only counts when it was given for this exact finding content (ids are positional).
+        fps = {f["finding_id"]: content_fingerprint(f) for f in rows}
+        vdir = run.path("findings", "verdicts")
+        vdir.mkdir(parents=True, exist_ok=True)
+        have = {v.get("finding_id") for v in (read_json(x) for x in vdir.glob("*.json") if x.name != EXPECTED)
+                if isinstance(v, dict) and v.get("fingerprint") and v.get("fingerprint") == fps.get(v.get("finding_id"))}
         serious = sorted((f for f in rows if f["severity"] in ("Critical", "High")
                           and f.get("basis") != "deterministic" and f["finding_id"] not in have), key=rank)
+        # extract_results.py stamps each verdict with the fingerprint the verifier was asked about.
+        write_json(vdir / EXPECTED, fps)
         cap = int((cfg.get("verify") or {}).get("maxFindings", 60))
         if len(serious) > cap:
             print(f"VERIFY: {len(serious)} High/Critical findings, verifying the first {cap}; "

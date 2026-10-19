@@ -654,12 +654,12 @@ footer.site .logo { height: 26px; }
   function detailHTML(f) {
     var ev = (f.evidence || []).map(function (e) {
       var file = e.path.split("/").pop();
-      return "<figure><figcaption><span>" + esc(file) + '</span><span class="num">line ' + e.line_start + (e.line_end !== e.line_start ? "–" + e.line_end : "") + "</span></figcaption><pre>" + esc(e.quote) + "</pre></figure>";
+      return "<figure><figcaption><span>" + esc(file) + '</span><span class="num">line ' + esc(e.line_start) + (e.line_end !== e.line_start ? "–" + esc(e.line_end) : "") + "</span></figcaption><pre>" + esc(e.quote) + "</pre></figure>";
     }).join("");
     var rel = (f.related_components || []);
     var sevNote = f.original_severity && f.original_severity !== f.severity ? ' <span class="tag">was ' + esc(f.original_severity) + "</span>" : "";
     return '<div class="detail">' +
-      '<div class="d-top"><span class="pill dot sev-' + f.severity + '">' + f.severity + "</span>" + sevNote + '<span class="tag">' + esc(areaLabel(f.area)) + '</span><span class="mono muted">' + esc(f.id) + "</span>" +
+      '<div class="d-top"><span class="pill dot sev-' + esc(f.severity) + '">' + esc(f.severity) + "</span>" + sevNote + '<span class="tag">' + esc(areaLabel(f.area)) + '</span><span class="mono muted">' + esc(f.id) + "</span>" +
       (f.baseline_status && f.baseline_status !== "unchanged" ? '<span class="tag">' + esc(f.baseline_status) + "</span>" : "") + "</div>" +
       "<h3>" + esc(f.title) + "</h3>" +
       '<div class="grid2"><div class="kv"><span>Component</span><b class="mono">' + esc(f.component) + '</b></div><div class="kv"><span>Effort to fix</span><b>' + esc(EFFORT[f.effort] || f.effort) + "</b></div></div>" +
@@ -672,7 +672,7 @@ footer.site .logo { height: 26px; }
   }
   function rowHTML(f) {
     return '<div class="row" role="option" tabindex="0" style="--c:' + SEVCOL[f.severity] + '" data-id="' + esc(f.id) + '" aria-selected="' + (st.sel === f.id) + '">' +
-      '<span class="bar"></span><div class="inner"><div class="top"><span class="pill sev-' + f.severity + '">' + f.severity + '</span><span class="mono muted">' + esc(f.id) + '</span><span class="tag">' + esc(areaLabel(f.area)) + "</span></div>" +
+      '<span class="bar"></span><div class="inner"><div class="top"><span class="pill sev-' + esc(f.severity) + '">' + esc(f.severity) + '</span><span class="mono muted">' + esc(f.id) + '</span><span class="tag">' + esc(areaLabel(f.area)) + "</span></div>" +
       '<div class="ttl">' + esc(f.title) + '</div><div class="sub"><span class="mono">' + esc(f.component) + "</span> · effort " + esc(f.effort) + "</div></div></div>";
   }
   var narrow = window.matchMedia("(max-width: 1100px)");
@@ -777,7 +777,7 @@ footer.site .logo { height: 26px; }
     var shown = objs.filter(function (o) { return o.toLowerCase().indexOf(q) >= 0; });
     $("objs").innerHTML = shown.map(function (o) {
       var a = D.automation[o], ov = Object.keys(a.fieldOverlaps || {}).length;
-      return '<button type="button" class="obj" data-obj="' + esc(o) + '" aria-current="' + (o === curObj) + '"' + (ov ? ' title="' + ov + ' field(s) written by more than one automation"' : "") + '><span>' + esc(o) + '</span><span class="n' + (ov ? " warn" : "") + '">' + a.activeAutomationCount + "</span></button>";
+      return '<button type="button" class="obj" data-obj="' + esc(o) + '" aria-current="' + (o === curObj) + '"' + (ov ? ' title="' + esc(ov) + ' field(s) written by more than one automation"' : "") + '><span>' + esc(o) + '</span><span class="n' + (ov ? " warn" : "") + '">' + esc(a.activeAutomationCount) + "</span></button>";
     }).join("") || '<p class="muted" style="padding:8px">No objects match.</p>';
   }
   function renderTimeline(o) {
@@ -809,7 +809,7 @@ footer.site .logo { height: 26px; }
           return '<div class="ov"><span class="mono">' + esc(fld) + "</span><span>" + esc(a.fieldOverlaps[fld].map(function (w) { return w.split(":").slice(1).join(":"); }).join(", ")) + "</span></div>";
         }).join("") + "</div>"
       : '<div class="overlaps muted">No field on ' + esc(o) + " is written by more than one active automation.</div>";
-    $("timeline").innerHTML = '<div class="t-head"><h3>' + esc(o) + '</h3><span class="muted">' + a.activeAutomationCount + " active automation(s)</span></div>" + steps + ovHTML;
+    $("timeline").innerHTML = '<div class="t-head"><h3>' + esc(o) + '</h3><span class="muted">' + esc(a.activeAutomationCount) + " active automation(s)</span></div>" + steps + ovHTML;
   }
   if (objs.length) {
     paintObjs(); renderTimeline(curObj);
@@ -828,7 +828,7 @@ footer.site .logo { height: 26px; }
       var ids = (it.finding_ids || []).filter(function (i) { return byId[i]; });
       var worst = ids.map(function (i) { return byId[i].severity; }).sort(function (a, b) { return SO[a] - SO[b]; })[0];
       return '<div class="card item"><b>' + esc(it.title) + "</b>" + (it.why ? '<span class="why">' + esc(it.why) + "</span>" : "") +
-        '<div class="ids">' + (worst ? '<span class="pill sev-' + worst + '">' + worst + "</span>" : "") + ids.map(fidBtn).join("") +
+        '<div class="ids">' + (worst ? '<span class="pill sev-' + esc(worst) + '">' + esc(worst) + "</span>" : "") + ids.map(fidBtn).join("") +
         ' <span class="tag">Effort ' + esc(it.effort) + "</span></div></div>";
     }).join("") || '<div class="empty">Nothing planned in this phase.</div>';
     return '<div class="phase"><div class="phase-head" style="--c:' + p[3] + '"><h3>' + p[1] + "</h3><span>" + p[2] + " · " + (RM[p[0]] || []).length + " item(s)</span></div>" + items + "</div>";

@@ -22,16 +22,18 @@ import shutil
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
+from glob import escape as glob_escape
 from pathlib import Path
 
-from common import Run, Timer, content_hash, estimate_tokens, info, load_config, read_json, write_json
+from common import Run, Timer, content_hash, estimate_tokens, info, load_run_config, read_json, write_json
 from flows import parse_flow
 from digests import build_digests
 from org_facts import build_org_facts
 
 NS = "{http://soap.sforce.com/2006/04/metadata}"
 TRIGGER_HEAD = re.compile(r"trigger\s+(\w+)\s+on\s+(\w+)\s*\(([^)]*)\)", re.I | re.S)
-CUSTOM_REF = re.compile(r"\b([A-Za-z][A-Za-z0-9_]*__(?:c|mdt|e|x|b))\b")
+# Apex / SOQL are case-insensitive: invoice__C is the same object as Invoice__c.
+CUSTOM_REF = re.compile(r"\b([A-Za-z][A-Za-z0-9_]*__(?:c|mdt|e|x|b))\b", re.I)
 IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 
 # Folder name -> component type, for everything not parsed specially.
@@ -55,6 +57,37 @@ WAVE_SUFFIX = {".wdpr": "WaveRecipe", ".wdf": "WaveDataflow", ".wdash": "WaveDas
 def xml_text(el, tag: str, default: str = "") -> str:
     found = el.find(NS + tag) if el is not None else None
     return found.text.strip() if found is not None and found.text else default
+
+
+def component_name(f: Path, folder: Path) -> str:
+    """Member name of a file in a generic metadata folder: its path under the folder minus the type
+    suffix. Account.Rec_1.md-meta.xml -> Account.Rec_1 (custom metadata records keep their type),
+    Account.Log_Call.quickAction-meta.xml -> Account.Log_Call, MyPage.page -> MyPage,
+    reports/Sales/Pipeline.report-meta.xml -> Sales/Pipeline (folder-qualified, like the manifest)."""
+    rel = f.relative_to(folder).as_posix()
+    if rel.endswith("-meta.xml"):
+        rel = rel[: -len("-meta.xml")]
+    head, _, last = rel.rpartition("/")
+    if "." in last:
+        last = last.rsplit(".", 1)[0]
+    return f"{head}/{last}" if head else last
+
+
+def _is_companion(f: Path) -> bool:
+    """X.page-meta.xml next to X.page: the metadata half of one component, not a second one."""
+    return f.name.endswith("-meta.xml") and f.with_name(f.name[: -len("-meta.xml")]).is_file()
+
+
+def _bundle_dirs(folder: Path) -> set[Path]:
+    """Sub-folders that are one component (an unzipped static resource, an experience bundle):
+    a sibling X.<suffix>-meta.xml describes them. Report / email / document folders also have a
+    sibling X.<kind>Folder-meta.xml but are containers, not components."""
+    out = set()
+    for d in (p for p in folder.iterdir() if p.is_dir()):
+        metas = [m for m in folder.glob(f"{glob_escape(d.name)}.*-meta.xml") if m.is_file()]
+        if metas and not any(m.name.endswith("Folder-meta.xml") for m in metas):
+            out.add(d)
+    return out
 
 
 def find_source_root(meta: Path) -> Path:
@@ -164,16 +197,26 @@ def build_inventory(src: Path, rel_base: Path, index_dir: Path) -> tuple[list[di
                               "files": len(files)})
         else:
             ctype = FOLDER_TYPES.get(kind, kind)
+            bundles = _bundle_dirs(folder)
+            for b in sorted(bundles):
+                files = [p for p in b.rglob("*") if p.is_file()]
+                text = "".join(p.read_text(encoding="utf-8", errors="replace") for p in files)
+                items.append({"id": f"{ctype}:{b.name}", "type": ctype, "name": b.name,
+                              "path": b.relative_to(rel_base).as_posix(), "object": "",
+                              "lines": text.count("\n") + 1 if text else 0,
+                              "tokens": estimate_tokens(text) if text else 0, "files": len(files)})
+            bundle_metas = {m for b in bundles for m in folder.glob(f"{glob_escape(b.name)}.*-meta.xml")}
             for f in sorted(p for p in folder.rglob("*") if p.is_file()):
-                name = f.name.split(".")[0]
-                add(ctype, name, f)
+                if f in bundle_metas or any(b in f.parents for b in bundles) or _is_companion(f):
+                    continue
+                add(ctype, component_name(f, folder), f)
     return items, flows
 
 
 def add_references(items: list[dict], rel_base: Path) -> None:
     """Which classes / objects each Apex class, trigger and flow refers to (name matching)."""
     class_names = {i["name"] for i in items if i["type"] == "ApexClass"}
-    object_names = {i["name"] for i in items if i["type"] == "CustomObject"}
+    lower_objects = {i["name"].lower(): i["name"] for i in items if i["type"] == "CustomObject"}
     lower_classes = {c.lower(): c for c in class_names}
     for item in items:
         if item["type"] not in ("ApexClass", "ApexTrigger", "Flow"):
@@ -183,8 +226,11 @@ def add_references(items: list[dict], rel_base: Path) -> None:
             text = re.sub(r"//[^\n]*|/\*.*?\*/", " ", text, flags=re.S)
         idents = set(IDENT.findall(text))
         refs_classes = sorted({lower_classes[i.lower()] for i in idents if i.lower() in lower_classes} - {item["name"]})
-        refs_objects = sorted(({i for i in idents if i in object_names} | set(CUSTOM_REF.findall(text)))
-                              - {item.get("object") or ""})
+        # Case-insensitive; reported in the object's own spelling when it was retrieved.
+        mentioned = {i.lower() for i in idents if i.lower() in lower_objects}
+        mentioned |= {r.lower() for r in CUSTOM_REF.findall(text)}
+        own = (item.get("object") or "").lower()
+        refs_objects = sorted({lower_objects.get(o, o) for o in mentioned if o != own})
         item["refs"] = {"classes": refs_classes, "objects": [o for o in refs_objects if o]}
 
 
@@ -333,8 +379,11 @@ def normalize_code_analyzer(tools_dir: Path, path_index: dict, cfg: dict) -> tup
         else:
             component = path_index.get(rel, "") if rel else ""
         if not component:
-            # Files inside an LWC / Aura bundle belong to the bundle folder.
-            bundle = next((p for s, p in by_suffix.items() if key.startswith(s + "/")), None)
+            # Files inside an LWC / Aura / static-resource bundle belong to the bundle folder: walk
+            # up the file's parent folders (one dict lookup each, not a scan of the whole inventory).
+            parts = key.split("/")
+            bundle = next((by_suffix[d] for d in ("/".join(parts[:n]) for n in range(len(parts) - 1, 0, -1))
+                           if d in by_suffix), None)
             component = path_index.get(bundle, "") if bundle else ""
         rel = rel or "metadata/" + key
         out.append({
@@ -367,6 +416,8 @@ def build_metrics(items: list[dict], flows: dict, automation: dict, evidence: li
             "activeProcessBuilders": sum(1 for f in flows.values() if f["isProcessBuilder"] and f["status"] == "Active"),
             "withDmlInLoop": sorted(n for n, f in flows.items() if f["dmlInLoop"] and f["status"] == "Active"),
             "withHardcodedIds": sorted(n for n, f in flows.items() if f["hardcodedIds"]),
+            # noFaultPath leaves out before-save "update triggering record" steps (not DML, can't
+            # have a fault path) -- the same exclusion rule_checks.py applies.
             "activeElementsWithoutFaultPath": sum(len(f["noFaultPath"]) for f in flows.values() if f["status"] == "Active"),
         },
         "workflowRules": {
@@ -396,8 +447,8 @@ def main() -> int:
     ap.add_argument("--run", required=True, help="run folder created by collect.py")
     ap.add_argument("--config")
     args = ap.parse_args()
-    cfg = load_config(args.config)
     run = Run(Path(args.run))
+    cfg = load_run_config(run, args.config)
 
     with Timer() as t:
         # Rebuild from scratch so no digest from an earlier index run lingers.

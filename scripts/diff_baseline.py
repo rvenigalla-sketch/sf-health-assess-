@@ -1,6 +1,7 @@
 """Compare this run with an earlier run of the same org (the baseline). Deterministic.
 
-Findings match by fingerprint (component + category + title gist), so moved line numbers don't
+Findings match one-to-one within the same component + category: first by a shared evidence quote,
+then by title similarity (token Jaccard >= 0.5), so moved line numbers and reworded titles don't
 count as change. Writes findings/baseline_diff.json and tags each finding in findings.json with
 baseline_status: new | unchanged | (fixed findings are listed separately).
 
@@ -12,6 +13,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import html
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +36,60 @@ def dig(d: dict, path: tuple):
             return None
         d = d.get(p)
     return d
+
+
+TITLE_JACCARD = 0.5
+WORD = re.compile(r"[a-z0-9_]+")
+
+
+def _quotes(f: dict) -> set[str]:
+    return {" ".join(html.unescape(e.get("quote") or "").split()).lower() for e in f.get("evidence") or []} - {""}
+
+
+def _title_tokens(f: dict) -> set[str]:
+    return {w for w in WORD.findall((f.get("title") or "").lower()) if len(w) > 2}
+
+
+def _jaccard(a: set, b: set) -> float:
+    return len(a & b) / len(a | b) if a | b else 0.0
+
+
+def _quote_overlap(a: set[str], b: set[str]) -> bool:
+    """Same evidence line, allowing one quote to be a longer / shorter cut of the other."""
+    return any(x == y or (min(len(x), len(y)) >= 12 and (x in y or y in x)) for x in a for y in b)
+
+
+def match_findings(old: list[dict], cur: list[dict]) -> dict[int, int]:
+    """current index -> old index, one-to-one. Candidates share component + category; a pair citing
+    the same evidence quote matches first, then the most similar title (token Jaccard >= 0.5).
+    A reworded title on the same evidence is the same finding; two old findings on one component are
+    two findings (each can be matched or fixed independently)."""
+    pairs: dict[int, int] = {}
+    used: set[int] = set()
+    key = lambda f: (f.get("component"), f.get("category"))
+    for pass_ in ("quote", "title"):
+        for n, f in enumerate(cur):
+            if n in pairs:
+                continue
+            best, best_score = None, 0.0
+            for m, o in enumerate(old):
+                if m in used or key(o) != key(f):
+                    continue
+                sim = _jaccard(_title_tokens(f), _title_tokens(o))
+                if pass_ == "quote":
+                    if not _quote_overlap(_quotes(f), _quotes(o)):
+                        continue
+                    score = 1.0 + sim
+                else:
+                    if sim < TITLE_JACCARD:
+                        continue
+                    score = sim
+                if score > best_score:
+                    best, best_score = m, score
+            if best is not None:
+                pairs[n] = best
+                used.add(best)
+    return pairs
 
 
 def main() -> int:
@@ -58,15 +115,15 @@ def main() -> int:
         old = read_json(prev_root / "findings" / "findings.json")
         cur_m = read_json(run.path("index", "metrics.json"), {})
         old_m = read_json(prev_root / "index" / "metrics.json", {})
-        old_by_fp = {f["fingerprint"]: f for f in old["findings"]}
-        cur_fps = {f["fingerprint"] for f in cur["findings"]}
-        for f in cur["findings"]:
-            prev = old_by_fp.get(f["fingerprint"])
+        pairs = match_findings(old["findings"], cur["findings"])
+        for n, f in enumerate(cur["findings"]):
+            prev = old["findings"][pairs[n]] if n in pairs else None
             f["baseline_status"] = "unchanged" if prev else "new"
             if prev and prev["severity"] != f["severity"]:
                 f["baseline_status"] = f"severity {prev['severity']} -> {f['severity']}"
-        fixed = [{"id": f["id"], "title": f["title"], "severity": f["severity"], "component": f["component"]}
-                 for fp, f in old_by_fp.items() if fp not in cur_fps]
+        matched_old = set(pairs.values())
+        fixed = [{"id": f.get("id"), "title": f["title"], "severity": f["severity"], "component": f["component"]}
+                 for m, f in enumerate(old["findings"]) if m not in matched_old]
         diff = {
             "previous": prev_root.name,
             "findings": {"new": sum(f["baseline_status"] == "new" for f in cur["findings"]),

@@ -21,11 +21,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
 import library
-from common import Run, Timer, earlier_run, info, load_config, read_json, write_json
+from common import Run, Timer, earlier_run, info, load_run_config, read_json, write_json
+from score import content_fingerprint
 
 # Incremental runs: inventory ids to review again. None = review everything (full run).
 DIRTY: set[str] | None = None
@@ -280,8 +282,11 @@ def plan_flow(items, automation, ev_by_path, budget) -> list[dict]:
     groups = defaultdict(list)
     for f in active:
         groups[f["object"] or f["kind"]].append(f)
+    # Every flow shard also carries the runtime-errors fact; a huge fact file must not squeeze the
+    # room left for flows to nothing (one flow per shard), so the flow budget has a floor.
+    room = max(budget - sum(_cost(e) for e in errors), budget // 2)
     shards = []
-    for n, group in enumerate(pack(list(groups.values()), budget - sum(_cost(e) for e in errors), _cost), 1):
+    for n, group in enumerate(pack(list(groups.values()), room, _cost), 1):
         group = sorted(group, key=lambda i: (i["object"], i["name"]))
         shards.append({
             "shard_id": f"flow-{n:02d}", "area": "flow", "reviewer": "flow-reviewer",
@@ -357,44 +362,100 @@ PLANNERS = {
 }
 
 
-def changed_components(items: list[dict], prev_items: list[dict]) -> set[str] | None:
-    """Ids whose content changed (or are new), plus one hop through Apex/flow class references in
-    both directions: callers of a changed class and classes a changed component calls.
-    None when the previous run has no hashes (indexed before incremental support)."""
+# Changing one of these marks its whole object as changed.
+OBJECT_LEVEL_TYPES = {"CustomObject", "CustomField", "ValidationRule", "RecordType", "BusinessProcess",
+                      "DuplicateRule", "MatchingRules", "SharingRules", "AssignmentRules", "AutoResponseRules",
+                      "EscalationRules", "ApprovalProcess"}
+# Types indexed by file name only (object ""): the object is the name's prefix
+# (Account.My_Rule.duplicateRule-meta.xml, Account.sharingRules-meta.xml, Case.assignmentRules-meta.xml).
+NAME_PREFIX_TYPES = {"DuplicateRule", "MatchingRules", "SharingRules", "AssignmentRules", "AutoResponseRules",
+                     "EscalationRules", "ApprovalProcess", "Workflow"}
+FLOW_NS = "{http://soap.sforce.com/2006/04/metadata}"
+
+
+def object_of(i: dict) -> str:
+    if i.get("object"):
+        return i["object"]
+    if i.get("type") in NAME_PREFIX_TYPES:
+        return (i.get("name") or "").split(".")[0]
+    return ""
+
+
+def subflow_refs(root: Path | None, i: dict) -> set[str]:
+    """Flow names this flow calls as subflows (<subflows><flowName>), read from its XML. The index
+    records class/object references only, so subflow calls are derived here."""
+    if root is None or i.get("type") != "Flow" or not i.get("path"):
+        return set()
+    if "subflows" in i.get("refs", {}):
+        return set(i["refs"]["subflows"])
+    try:
+        tree = ET.parse(root / i["path"]).getroot()
+    except (OSError, ET.ParseError):
+        return set()
+    return {el.findtext(FLOW_NS + "flowName").strip() for el in tree.iter(FLOW_NS + "subflows")
+            if (el.findtext(FLOW_NS + "flowName") or "").strip()}
+
+
+def changed_components(items: list[dict], prev_items: list[dict], root: Path | None = None,
+                       prev_root: Path | None = None) -> set[str] | None:
+    """Ids whose content changed (or are new), plus one hop through Apex/flow class references and
+    flow -> subflow calls in both directions: callers of a changed class / subflow and what a changed
+    component calls. References are the union of the previous and current snapshot, so removing a
+    call still marks the old callee. None when the previous run has no hashes."""
     prev = {i["id"]: i.get("sha") for i in prev_items}
     if not any(prev.values()):
         return None
+    prev_by_id = {p["id"]: p for p in prev_items}
+    cur_ids = {i["id"] for i in items}
     changed = {i["id"] for i in items if not i.get("sha") or prev.get(i["id"]) != i["sha"]}
+    deleted = [p for p in prev_items if p["id"] not in cur_ids]
     # Deleted components can change behaviour of what remains (e.g. a removed validation rule).
-    changed_objects = {p.get("object") for p in prev_items if p["id"] not in {i["id"] for i in items}} - {"", None}
+    changed_objects = {object_of(p) for p in deleted} - {"", None}
     class_ids = {i["name"]: i["id"] for i in items if i["type"] == "ApexClass"}
-    changed_classes = {i["name"] for i in items if i["id"] in changed and i["type"] == "ApexClass"}
-    # A changed object, field, validation rule, record type... marks the whole object as changed, so
-    # every flow, class and trigger that uses that object is reviewed again.
-    changed_objects |= {i.get("object") for i in items if i["id"] in changed
-                        and i["type"] in ("CustomObject", "CustomField", "ValidationRule", "RecordType",
-                                          "BusinessProcess", "DuplicateRule", "SharingRules")} - {"", None}
+    flow_ids = {i["name"]: i["id"] for i in items if i["type"] == "Flow"}
+    changed_classes = {i["name"] for i in items if i["id"] in changed and i["type"] == "ApexClass"} \
+        | {p["name"] for p in deleted if p.get("type") == "ApexClass"}
+    changed_flows = {i["name"] for i in items if i["id"] in changed and i["type"] == "Flow"} \
+        | {p["name"] for p in deleted if p.get("type") == "Flow"}
+    # A changed object, field, validation rule, record type, duplicate / sharing rule... marks the whole
+    # object as changed, so every flow, class and trigger that uses that object is reviewed again.
+    changed_objects |= {object_of(i) for i in items if i["id"] in changed
+                        and i["type"] in OBJECT_LEVEL_TYPES} - {"", None}
+
+    def refs(i: dict) -> tuple[set[str], set[str], set[str]]:
+        p = prev_by_id.get(i["id"], {})
+        cur_r, prev_r = i.get("refs", {}), p.get("refs", {})
+        return (set(cur_r.get("classes", [])) | set(prev_r.get("classes", [])),
+                set(cur_r.get("objects", [])) | set(prev_r.get("objects", [])),
+                subflow_refs(root, i) | (subflow_refs(prev_root, p) if p else set()))
+
     dirty = set(changed)
     for i in items:
-        refs = i.get("refs", {})
-        if any(r in changed_classes for r in refs.get("classes", [])):
-            dirty.add(i["id"])
-        if i["id"] in changed:
-            dirty.update(class_ids[r] for r in refs.get("classes", []) if r in class_ids)
-        if i.get("object") in changed_objects or set(refs.get("objects", [])) & changed_objects:
+        classes, objects, subflows = refs(i)
+        if classes & changed_classes or subflows & changed_flows:
+            dirty.add(i["id"])                     # calls a changed class / subflow
+        if i["id"] in changed:                     # what a changed component calls (or used to call)
+            dirty.update(class_ids[r] for r in classes if r in class_ids)
+            dirty.update(flow_ids[r] for r in subflows if r in flow_ids)
+        if object_of(i) in changed_objects or objects & changed_objects:
             dirty.add(i["id"])
     return dirty
 
 
-def carry_forward(run: Run, prev_root: Path, items: list[dict], dirty: set[str]) -> dict:
+def carry_forward(run: Run, prev_root: Path, items: list[dict], dirty: set[str],
+                  planned: set[str] | None = None) -> dict:
     """Previous validated findings whose components are all unchanged -> findings/raw/carried.json,
-    with their verdicts copied to findings/verdicts/carried__<n>.json."""
+    with their verdicts copied to findings/verdicts/carried__<n>.json.
+    A finding on a component that is in a planned shard is not carried: the reviewer will report it
+    again if it still holds, and carrying it too would duplicate it."""
+    planned = planned or set()
     ids = {i["id"] for i in items}
     by_path = {p: i["id"] for i in items for p in (i["path"], i.get("digestPath")) if p}
     prev_path = prev_root / "findings" / "validated.jsonl"
     prev = [json.loads(l) for l in prev_path.read_text(encoding="utf-8").splitlines() if l.strip()] \
         if prev_path.exists() else []
-    prev_verdicts = {v["finding_id"]: v for v in (read_json(p) for p in (prev_root / "findings" / "verdicts").glob("*.json")) if v}
+    prev_verdicts = {v["finding_id"]: v for v in (read_json(p) for p in (prev_root / "findings" / "verdicts").glob("*.json"))
+                     if isinstance(v, dict) and "finding_id" in v}
     for old in run.path("findings", "verdicts").glob("carried__*.json"):
         old.unlink()
     carried, dropped = [], 0
@@ -403,20 +464,46 @@ def carry_forward(run: Run, prev_root: Path, items: list[dict], dirty: set[str])
             continue                                # rule checks are recomputed every run
         involved = {f["component"], *f.get("related_components", []),
                     *(by_path.get(e["path"], "") for e in f.get("evidence", []))} - {""}
-        if f["component"] not in ids or involved & dirty:
+        if f["component"] not in ids or involved & dirty or f["component"] in planned:
             dropped += 1
             continue
         keep = {k: v for k, v in f.items() if k not in ("shard_id", "finding_id", "verification")}
         keep["carried_from"] = {"run": prev_root.name, "finding_id": f["finding_id"]}
         carried.append(keep)
         v = prev_verdicts.get(f["finding_id"])
-        if v:   # validate_findings.py numbers carried findings carried#1, carried#2, ... in this order
+        # A previous verdict is reused only if it was given for this finding's content (when it says).
+        if v and (not v.get("fingerprint") or v["fingerprint"] == content_fingerprint(f)):
+            # validate_findings.py numbers carried findings carried#1, carried#2, ... in this order
             write_json(run.path("findings", "verdicts", f"carried__{len(carried)}.json"),
-                       {**v, "finding_id": f"carried#{len(carried)}"})
+                       {**v, "finding_id": f"carried#{len(carried)}", "fingerprint": content_fingerprint(keep)})
     write_json(run.path("findings", "raw", "carried.json"),
                {"shard_id": "carried", "findings": carried,
                 "coverage": {"components_reviewed": [], "skipped": []}, "follow_up": []})
     return {"carried": len(carried), "notCarried": dropped}
+
+
+# Outputs of the review / verify / score stages. A new plan makes all of them stale: finding ids are
+# positional ({shard}#{n}), so a leftover verdict would attach to a different new finding and a
+# leftover raw file would make a failed shard look reviewed.
+DERIVED_FILES = ("validated.jsonl", "rejected.jsonl", "coverage.json", "findings.json", "refuted.jsonl",
+                 "baseline_diff.json")
+KEEP_RAW = {"rules.json"}          # rule_checks.py runs before planning; carried.json is rewritten below
+
+
+def clear_stale_outputs(run: Run) -> None:
+    for old in run.path("shards").glob("*.json"):
+        old.unlink()
+    for old in run.path("findings", "raw").glob("*.json"):
+        if old.name not in KEEP_RAW:
+            old.unlink()
+    for old in run.path("findings", "verdicts").glob("*.json"):
+        if not old.name.startswith("carried__"):     # rewritten (or removed) by carry_forward / main
+            old.unlink()
+    for name in DERIVED_FILES:
+        run.path("findings", name).unlink(missing_ok=True)
+
+
+CONTEXT_FILE_KEYS = ("relatedClasses", "triggerHandlers")
 
 
 def reviewer_context(run: Run, cfg: dict, shards: list[dict]) -> None:
@@ -443,8 +530,8 @@ def main() -> int:
     ap.add_argument("--baseline", default="none",
                     help="auto = newest earlier run of the same client; or a run folder; none = full review")
     args = ap.parse_args()
-    cfg = load_config(args.config)
     run = Run(Path(args.run))
+    cfg = load_run_config(run, args.config)
     budget = cfg["shards"]["tokenBudget"]
     MAX_ITEMS = cfg["shards"].get("maxComponents", MAX_ITEMS)
 
@@ -458,8 +545,7 @@ def main() -> int:
             info(f"Unknown areas {unknown}; available: {sorted(PLANNERS)}")
             return 2
 
-        for old in run.path("shards").glob("*.json"):
-            old.unlink()
+        clear_stale_outputs(run)
         # Full plan first: it defines which areas this run assesses (incremental or not).
         DIRTY = None
         full = [{**s, "planner": a} for a in areas for s in PLANNERS[a](items, automation, ev_by_path, budget)]
@@ -470,13 +556,15 @@ def main() -> int:
         incremental = None
         run.path("findings", "raw").mkdir(parents=True, exist_ok=True)
         if prev_root and (prev_root / "index" / "inventory.json").exists():
-            DIRTY = changed_components(items, read_json(prev_root / "index" / "inventory.json", []))
+            DIRTY = changed_components(items, read_json(prev_root / "index" / "inventory.json", []),
+                                       run.root, prev_root)
             if DIRTY is None:
                 info(f"INCREMENTAL: {prev_root.name} has no content hashes; doing a full review")
         if DIRTY is not None:
             shards = [{**s, "planner": a} for a in areas for s in PLANNERS[a](items, automation, ev_by_path, budget)]
+            planned = {c for s in shards for c in s["components"]}
             incremental = {"baseline": prev_root.name, "changedComponents": len(DIRTY),
-                           "fullPlanShards": len(full), **carry_forward(run, prev_root, items, DIRTY)}
+                           "fullPlanShards": len(full), **carry_forward(run, prev_root, items, DIRTY, planned)}
         else:
             shards = full
             run.path("findings", "raw", "carried.json").unlink(missing_ok=True)
@@ -484,8 +572,12 @@ def main() -> int:
                 old.unlink()
 
         reviewer_context(run, cfg, shards)
+        tokens_by_path = {i["path"]: i.get("tokens", 0) for i in items}
         for s in shards:
-            s["sourceTokens"] = sum(f["tokens"] for f in s["files"])
+            # Reviewers also read the context files (related classes, trigger handlers).
+            ctx = {c["path"] for key in CONTEXT_FILE_KEYS for c in s.get("context", {}).get(key, [])}
+            ctx -= {f["path"] for f in s["files"]} | {f.get("sourcePath") for f in s["files"]}
+            s["sourceTokens"] = sum(f["tokens"] for f in s["files"]) + sum(tokens_by_path.get(p, 0) for p in ctx)
             s["evidence"] = [{**e, "message": (e.get("message") or "")[:300]} for e in s["evidence"]]
             write_json(run.path("shards", f"{s['shard_id']}.json"), s)
 

@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -41,6 +42,19 @@ def load_config(path: str | None = None) -> dict:
     if cfg.get("dataPolicy") not in ("full", "metadata-only"):
         raise ValueError(f"dataPolicy must be 'full' or 'metadata-only', got {cfg.get('dataPolicy')!r}")
     return cfg
+
+
+def load_run_config(run: "Run", path: str | None = None) -> dict:
+    """Config for a run. The client config passed to the first step is saved as <run>/client-config.yml;
+    later steps reuse it when --config is omitted, so a setting like library.enabled: false can't be
+    lost by forgetting the flag. Passing --config again replaces the saved copy."""
+    saved = run.path("client-config.yml")
+    if path:
+        text = Path(path).read_text(encoding="utf-8")
+        if not saved.exists() or saved.read_text(encoding="utf-8") != text:
+            saved.write_text(text, encoding="utf-8")
+        return load_config(path)
+    return load_config(str(saved) if saved.exists() else None)
 
 
 def slug(text: str) -> str:
@@ -100,16 +114,59 @@ def sf_executable() -> str:
     return exe
 
 
+TIMEOUT_CODE = 124      # like coreutils `timeout`
+NOT_STARTED_CODE = 127  # command not found / could not start
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill a process and its children. On Windows `sf` is sf.cmd -> cmd.exe -> node, and killing
+    only cmd.exe leaves node running and holding the output pipes, so communicate() never returns."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)   # the child leads its own session (start_new_session)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
 def run_cmd(args: list[str], cwd: Path | None = None, timeout: int = 3600,
             env: dict | None = None) -> tuple[int, str, str]:
-    """Run a command, return (code, stdout, stderr). Never raises on non-zero exit."""
+    """Run a command, return (code, stdout, stderr). Never raises: a timeout kills the whole process
+    tree and returns code 124; a command that can't be started returns 127. (Ctrl+C still propagates.)"""
     if args and args[0] == "sf":
-        args = [sf_executable(), *args[1:]]
-    proc = subprocess.run(
-        args, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=timeout, env={**os.environ, **env} if env else None,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
+        try:
+            args = [sf_executable(), *args[1:]]
+        except RuntimeError as e:
+            return NOT_STARTED_CODE, "", str(e)
+    try:
+        proc = subprocess.Popen(
+            args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace",
+            env={**os.environ, **env} if env else None,
+            start_new_session=os.name != "nt",
+        )
+    except OSError as e:
+        return NOT_STARTED_CODE, "", f"could not start {args[0] if args else '?'}: {e}"
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return proc.returncode, out or "", err or ""
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=30)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            out, err = "", ""
+        msg = f"TIMEOUT: command did not finish within {timeout}s and was killed: {' '.join(map(str, args))[:300]}"
+        return TIMEOUT_CODE, out or "", ((err or "") + "\n" + msg).lstrip("\n")
+    except BaseException:
+        _kill_tree(proc)    # e.g. KeyboardInterrupt: don't leave an orphaned sf/node process behind
+        raise
 
 
 def run_sf_json(args: list[str], cwd: Path | None = None, timeout: int = 3600,
