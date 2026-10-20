@@ -35,7 +35,12 @@ script; that replaces the saved copy for the rest of the run.
      wants a report without a fresh summary, add `--allow-stale-synthesis` (citations of findings that
      aren't accepted are dropped) and tell them the summary may not match the findings.
    - Report any `RENDER WARNING` lines (e.g. accepted findings the summary left out of the roadmap).
-4. Give the user the paths:
+4. **Usage**: `python "$PLUGIN/scripts/usage_report.py" --run RUN`. It adds up the Claude tokens every
+   session spent on this run (review, follow-up, verify, summary, and the chat itself) from Claude Code's
+   local logs and writes `RUN/usage.json`. Show its table and the plan's estimate. If a chat that did
+   unrelated work is listed with a large total, offer to re-run with `--session` naming only the
+   sessions that ran this assessment.
+5. Give the user the paths:
    - `RUN/report/report.html`: interactive dashboard. Opens in any browser; can be attached.
    - `RUN/report/report.docx`: client report
    - `RUN/report/baseline.xlsx`: baseline workbook

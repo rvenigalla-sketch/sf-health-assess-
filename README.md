@@ -73,7 +73,10 @@ to ~2.4M, capped by `verify.maxFindings`):
 | ~300 classes, 400 flows | 60–80 | 8–9M | 40–60 min | 1–1.5 h |
 | 1,000+ classes, 1,000+ flows | 150–200 | 14–18M | 1.5–2.5 h | 2–4 h |
 
-The rows below the first are extrapolations; recalibrate them from real runs' `run_log.json`. On a
+The rows below the first are extrapolations; recalibrate them from real runs.
+`python scripts/usage_report.py --run <run>` reports a run's **actual** tokens per stage and model, from
+Claude Code's local session logs (also run by the assess and finalize commands; saved as `<run>/usage.json`).
+Most tokens are cache reads, which count for less than fresh input. On a
 subscription a large run may pause at usage limits. Split it with `--areas` if needed.
 
 **Accuracy comes first in the defaults.** Every setting below that could trade accuracy for speed is

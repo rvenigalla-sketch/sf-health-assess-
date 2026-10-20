@@ -81,6 +81,8 @@ stop, show its last lines and say what to do. Never skip a stage silently.
    Tell the user where `RUN/review/findings_review.xlsx` is. Ask them to set Accept / Reject / Edit
    for every row, then run `/sf-health:finalize <RUN>`. **Stop here.** Do not finalize or accept
    findings on the consultant's behalf.
+   Run `python "$PLUGIN/scripts/usage_report.py" --run RUN` and show the token table (actual usage so
+   far, against the plan's estimate).
    Also give a short summary from `score.py`'s output line: counts by severity, refuted count and the provisional overall score.
 
 ## Resuming
