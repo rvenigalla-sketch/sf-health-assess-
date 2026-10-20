@@ -368,7 +368,6 @@ def retrieve(run: Run, cfg: dict, org: str) -> bool:
     # A fresh retrieve replaces the snapshot: components deleted in the org since an earlier
     # attempt must not linger in force-app.
     shutil.rmtree(meta_dir / "force-app", ignore_errors=True)
-    run.path("privacy.json").unlink(missing_ok=True)      # redaction counts belong to one snapshot
     ensure_sfdx_project(meta_dir, api_version)
     workers = max(1, int(cfg["retrieve"].get("parallel", 1)))
     staging_root = run.path("_staging")
@@ -430,7 +429,6 @@ def merge_existing(run: Run) -> bool:
         return False
     with Timer() as t:
         shutil.rmtree(run.path("metadata", "force-app"), ignore_errors=True)
-        run.path("privacy.json").unlink(missing_ok=True)
         ensure_sfdx_project(run.path("metadata"), ET.parse(jobs[0][0]).getroot().findtext(f"{{{MD_NS}}}version"))
         merged, skipped = merge_all(run, jobs, access)
         shutil.rmtree(staging, ignore_errors=True)
@@ -444,12 +442,9 @@ SF_ID = re.compile(r"\b(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{5}0[A-Za-z0-9]{9}(?:[A-Za-z
 QUOTED = re.compile(r"(\"[^\"\n]{1,300}\"|'[^'\n]{1,300}')")
 
 
-EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
-
-
 def redact_text(text: str) -> str:
-    """Remove record IDs, email addresses and quoted field values from runtime error text."""
-    return QUOTED.sub("<value>", EMAIL.sub("<email>", SF_ID.sub("<recordId>", text)))
+    """Remove record IDs and quoted field values from runtime error text."""
+    return QUOTED.sub("<value>", SF_ID.sub("<recordId>", text))
 
 
 def redact_json(obj):

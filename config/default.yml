@@ -154,15 +154,6 @@ ruleChecks:
 incremental:
   enabled: true
 
-# Personal data is redacted on the consultant's machine before any AI stage (scripts/privacy.py, run by
-# build_index.py): emails, phone numbers and SSN-shaped numbers in retrieved metadata and tool output
-# become placeholders. Counts (never values) go to <run>/privacy.json.
-privacy:
-  redact: true
-  # Also replace every string literal in Apex test classes with '[redacted-text]' (test data is where realistic
-  # names, dates of birth and ids end up). On in config/hipaa.yml.
-  redactTestData: false
-
 # Local finding library: consultant decisions (accept / edit / reject) from every run, with
 # component, object and client names replaced by placeholders. Never committed, never uploaded.
 # Used for "seen before" hints in the review sheet and to warn reviewers about known false positives.

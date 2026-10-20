@@ -29,7 +29,6 @@ from common import Run, Timer, content_hash, estimate_tokens, info, load_run_con
 from flows import parse_flow
 from digests import build_digests
 from org_facts import build_org_facts
-from privacy import redact_run
 
 NS = "{http://soap.sforce.com/2006/04/metadata}"
 TRIGGER_HEAD = re.compile(r"trigger\s+(\w+)\s+on\s+(\w+)\s*\(([^)]*)\)", re.I | re.S)
@@ -450,9 +449,6 @@ def main() -> int:
     args = ap.parse_args()
     run = Run(Path(args.run))
     cfg = load_run_config(run, args.config)
-
-    # Personal data out first: everything indexed (and so everything an AI stage reads) is redacted.
-    redact_run(run, cfg)
 
     with Timer() as t:
         # Rebuild from scratch so no digest from an earlier index run lingers.
