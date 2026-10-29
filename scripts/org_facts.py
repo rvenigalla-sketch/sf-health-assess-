@@ -1,6 +1,6 @@
 """Condense org-level tool output (Health Check, hardis) into small citable text tables.
 
-Raw outputs can be huge (FSF: 27k permission grants, 9 MB). Reviewers get one line per fact in
+Raw outputs can be huge (one pilot org: 27k permission grants, 9 MB). Reviewers get one line per fact in
 index/orgfacts/<topic>.txt. Those files are real paths with line numbers, so findings cite them
 exactly like source code and validate_findings.py checks them the same way.
 

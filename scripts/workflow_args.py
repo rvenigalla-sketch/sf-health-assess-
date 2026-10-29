@@ -73,7 +73,7 @@ def main() -> int:
             "useAgentTypes": bool((cfg.get("models") or {}).get("useAgentTypes")),
             "allowUnrestrictedAgents": bool((cfg.get("models") or {}).get("allowUnrestrictedAgents", False))}
     if args.kind in ("review", "followup"):
-        out = {**base, "shards": shard_list(run, args.kind == "followup"), **model_arg(cfg, "reviewer")}
+        out = {**base, "kind": args.kind, "shards": shard_list(run, args.kind == "followup"), **model_arg(cfg, "reviewer")}
     elif args.kind == "verify":
         p = run.path("findings", "validated.jsonl")
         rows = [json.loads(l) for l in p.open(encoding="utf-8")] if p.exists() else []

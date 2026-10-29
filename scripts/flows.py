@@ -1,6 +1,6 @@
 """Flow metadata parsing: facts for the automation map and a compact digest for reviewers.
 
-Raw flow XML is verbose (FSF: ~105k lines for 194 flows). Reviewers get a deterministic digest
+Raw flow XML is verbose (one pilot org: ~105k lines for 194 flows). Reviewers get a deterministic digest
 instead: one line per element with its connectors, plus computed facts (DML in loops, missing
 fault paths, hard-coded IDs). The digest is written to index/flows/<Flow>.txt and is a valid
 evidence path for findings.

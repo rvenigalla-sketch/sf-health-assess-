@@ -168,6 +168,30 @@ class RunCmdTest(unittest.TestCase):
         self.assertEqual((code, out.strip()), (0, "hi"))
 
 
+class ProgressTest(unittest.TestCase):
+    def test_tool_count_matches_data_policy(self):
+        from common import load_config
+        cfg = load_config(None)
+        t = cfg["tools"]
+        full = 1 + 2 + len(t["orgCheck"]["views"]) + len(t["hardis"]["commands"])
+        self.assertEqual(collect.tool_count(cfg), full)
+        cfg["dataPolicy"] = "metadata-only"
+        self.assertEqual(collect.tool_count(cfg), 1)
+
+    def test_progress_lines_never_pass_100_percent(self):
+        import contextlib
+        import io
+        from common import Progress
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            p = Progress("collect", 2)
+            for d in ("a", "b", "c"):
+                p.tick(d)
+        lines = err.getvalue().splitlines()
+        self.assertEqual(lines[0], "PROGRESS collect 1/2 50% [##########----------] a")
+        self.assertEqual(lines[2], "PROGRESS collect 3/3 100% [####################] c")
+
+
 class InventoryNamingTest(TempDirCase):
     def test_catch_all_names_are_unique_and_skip_companions(self):
         src = self.tmp / "metadata" / "force-app" / "main" / "default"

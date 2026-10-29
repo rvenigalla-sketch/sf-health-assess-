@@ -1,0 +1,45 @@
+name: Pilot feedback
+description: Results and feedback from running sf-health on a real org
+labels: [pilot]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One issue per assessment. **No client names or data**: describe the org by size only.
+  - type: input
+    id: version
+    attributes:
+      label: sf-health version
+    validations:
+      required: true
+  - type: input
+    id: size
+    attributes:
+      label: Org size
+      description: e.g. "~300 Apex classes, 400 flows, production"
+    validations:
+      required: true
+  - type: input
+    id: decisions
+    attributes:
+      label: Review sheet decisions
+      description: "Accepted / edited / rejected counts, e.g. 42 / 9 / 7"
+    validations:
+      required: true
+  - type: input
+    id: usage
+    attributes:
+      label: Time and tokens
+      description: Total run time, and total tokens from the usage table at the end
+  - type: dropdown
+    id: guide
+    attributes:
+      label: Could you finish using only the user guide?
+      options: [Yes, Yes but some steps were unclear, "No"]
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: What was unclear, wrong or missing
+      description: Common false positives (by pattern, not component name), confusing steps, report wording.

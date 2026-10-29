@@ -33,11 +33,23 @@ If they already confirmed these in the conversation, don't ask again.
 
 ## Stages
 
-Run in order. After each one, give the user one short progress line. If a script exits non-zero,
-stop, show its last lines and say what to do. Never skip a stage silently.
+Run in order. If a script exits non-zero, stop, show its last lines and say what to do. Never skip a
+stage silently.
+
+**Progress.** The user must always know where the run is:
+- Start each stage with a header line `**[Stage N/8] <Name>**` and end it with one short result line
+  (e.g. `[Stage 2/8] Index done: 5,104 components, 212 flows (1 min)`).
+- Long scripts print `PROGRESS <stage> done/total pct% [####------] detail` lines. Relay them as they
+  come, but no more than one per 10% so the chat stays readable.
+- The AI stages (4, 5, 6) run as background workflows. When one starts, tell the user it is running,
+  how many agents it has, and that `/workflows` shows it live (each agent that finishes logs a
+  PROGRESS line). Don't poll it: you are notified when it completes.
 
 1. **Collect**: `collect.py --org "<alias>" --client "<Client>" [--date D] [--config C]`
-   Preflight problems stop the run; show them. Tool failures are logged and the run continues.
+   - It takes 20 minutes to 2+ hours, so run it with `run_in_background`. Watch its output file with
+     Monitor for `PROGRESS` and `PREFLIGHT` lines and relay them (see **Progress**); you are notified
+     when it exits. Don't start a second copy while it runs.
+   - Preflight problems stop the run; show them. Tool failures are logged and the run continues.
    Report which tools failed (from `RUN/run_log.json`).
 2. **Index**: `build_index.py --run RUN`
    Then **rule checks**: `rule_checks.py --run RUN` (script-made findings, no Claude usage).

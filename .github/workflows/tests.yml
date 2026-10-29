@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    # The deterministic pipeline tests need no Salesforce org, no sf CLI and no Claude usage.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install pyyaml openpyxl python-docx
+      - name: Plugin manifests are valid JSON with a version
+        run: python -c "import json; v = json.load(open('.claude-plugin/plugin.json'))['version']; json.load(open('.claude-plugin/marketplace.json')); print('version', v)"
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v

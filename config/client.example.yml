@@ -1,0 +1,20 @@
+# sf-health client config: copy to <client>.yml, edit, and pass to /sf-health:assess with --config.
+# Only the keys you set here change; everything else comes from config/default.yml.
+# The file is saved in the run folder (client-config.yml) and reused by every later step of that run.
+
+# full          : every tool, including the ones that query the org (Org Check, hardis, Security Health Check).
+# metadata-only : retrieved metadata and Code Analyzer only. Use this whenever the client was told
+#                 "metadata only".
+dataPolicy: full
+
+tools:
+  orgCheck:
+    # Org Check's production-org acknowledgement. Needed for production orgs when dataPolicy is full.
+    acceptTerms: true
+
+# Uncomment if the client's contract rules out keeping even anonymised review decisions on your machine.
+# library:
+#   enabled: false
+
+# Uncomment on Windows if long file paths are off and retrieves skip files (see the user guide).
+# workspaceRoot: C:/hr

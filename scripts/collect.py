@@ -4,7 +4,7 @@ Preflight -> manifest from org -> chunked metadata retrieve -> run analysis tool
 Every step is logged to <run>/run_log.json; a failed chunk or tool is logged and the run continues.
 
 Usage:
-  python collect.py --org "FSF Prod" --client FSF [--config client.yml] [--steps preflight,manifest,retrieve,tools]
+  python collect.py --org "Acme Prod" --client Acme [--config client.yml] [--steps preflight,manifest,retrieve,tools]
 """
 
 from __future__ import annotations
@@ -21,11 +21,18 @@ from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 from common import (
-    Run, Timer, info, load_config, load_run_config, read_json, run_cmd, run_sf_json, write_json,
+    Progress, Run, Timer, info, load_config, load_run_config, read_json, run_cmd, run_sf_json, write_json,
 )
 
 MD_NS = "http://soap.sforce.com/2006/04/metadata"
 ALL_STEPS = ("preflight", "manifest", "retrieve", "tools")
+# Set by main once the number of retrieve chunks and tools is known; ticked after each one.
+_progress: Progress | None = None
+
+
+def _tick(detail: str) -> None:
+    if _progress:
+        _progress.tick(detail)
 
 
 # --------------------------------------------------------------------------- preflight
@@ -398,7 +405,9 @@ def retrieve(run: Run, cfg: dict, org: str) -> bool:
             if ok:
                 info(f"RETRIEVE {chunk.stem}: {files} files in {t.seconds:.0f}s"
                      + (f" ({len(errors)} component errors)" if errors else ""))
+                _tick(f"retrieved {chunk.stem}")
                 return True
+        _tick(f"retrieve {chunk.stem} FAILED")
         return False
 
     jobs = [(c, workers > 1) for c in chunks] + [(a, True) for a in access]
@@ -470,6 +479,7 @@ def tool_step(run: Run, name: str, args: list[str], out_file: str, cwd: Path | N
     run.log_step(f"tool:{name}", "ok" if ok else "failed", t.seconds, output=f"tools/{out_file}",
                  error=None if ok else (res.get("message") or res.get("error")))
     info(f"TOOL {name}: {'ok' if ok else 'FAILED'} ({t.seconds:.0f}s)")
+    _tick(f"tool {name}" + ("" if ok else " FAILED"))
     return ok
 
 
@@ -490,6 +500,7 @@ def code_analyzer(run: Run, cfg: dict) -> None:
     run.log_step("tool:code-analyzer", "ok" if ok else "failed", t.seconds,
                  output="tools/code-analyzer.json", error=None if ok else (err or out)[-1500:])
     info(f"TOOL code-analyzer: {'ok' if ok else 'FAILED'} ({t.seconds:.0f}s)")
+    _tick("tool code-analyzer" + ("" if ok else " FAILED"))
 
 
 def org_check(run: Run, cfg: dict, org: str) -> None:
@@ -528,6 +539,17 @@ def health_check(run: Run, cfg: dict, org: str) -> None:
                "--query", "SELECT RiskType, Setting, SettingGroup, OrgValue, StandardValue "
                           "FROM SecurityHealthCheckRisks"],
               "healthcheck-risks.json")
+
+
+def tool_count(cfg: dict) -> int:
+    """How many tool steps tools() will run (one progress unit each)."""
+    t = cfg["tools"]
+    n = int(bool(t["codeAnalyzer"]["enabled"]))
+    if cfg["dataPolicy"] != "metadata-only":
+        n += 2 * bool(t["healthCheck"]["enabled"])
+        n += len(t["orgCheck"]["views"]) if t["orgCheck"]["enabled"] else 0
+        n += len(t["hardis"]["commands"]) + bool(t["hardis"].get("auditTrail")) if t["hardis"]["enabled"] else 0
+    return n
 
 
 def tools(run: Run, cfg: dict, org: str) -> None:
@@ -575,6 +597,9 @@ def main() -> int:
         return 2
     if "manifest" in steps and not manifest(run, cfg, args.org):
         return 3
+    global _progress
+    chunks = sum(len(list(run.path("manifest").glob(g))) for g in ("chunk_*.xml", "access_*.xml"))         if "retrieve" in steps else 0
+    _progress = Progress("collect", chunks + (tool_count(cfg) if "tools" in steps else 0))
     if "retrieve" in steps:
         retrieve(run, cfg, args.org)
     elif "merge" in steps:

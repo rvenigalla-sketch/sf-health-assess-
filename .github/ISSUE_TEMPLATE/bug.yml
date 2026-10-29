@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in sf-health failed or produced a wrong result
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste client data here**: no org files, findings text, usernames or run folders.
+        Use placeholders (e.g. `ClassA`) and attach only `run_log.json` if needed.
+  - type: input
+    id: version
+    attributes:
+      label: sf-health version
+      description: "/plugin → Installed → sf-health"
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Stage
+      options: [Setup / install, 1 Collect, 2 Index, 3 Plan, 4 Review, 5 Follow-up, 6 Verify, 7 Score, 8 Review sheet, Finalize / report]
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux]
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: Include the last lines of the error message.
+    validations:
+      required: true

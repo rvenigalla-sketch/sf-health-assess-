@@ -3,7 +3,7 @@
 
 # full          : run every tool, including org-querying tools (Org Check, hardis, Health Check).
 # metadata-only : retrieved metadata + Code Analyzer only. Use when the client was promised
-#                 "metadata only" (e.g. Sandy's engagement).
+#                 "metadata only".
 dataPolicy: full
 
 # Where runs are written: <workspaceRoot>/<client>/<YYYY-MM-DD>/...

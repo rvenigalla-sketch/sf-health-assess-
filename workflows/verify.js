@@ -53,6 +53,15 @@ function prompt(f) {
   ].join('\n')
 }
 
+// One PROGRESS line per finished agent (live in /workflows), same format as the scripts' progress lines.
+let done = 0
+function progress(stage, total, label) {
+  done += 1
+  const pct = total ? Math.floor(100 * done / total) : 100
+  const bar = '#'.repeat(Math.floor(pct / 5)).padEnd(20, '-')
+  log(`PROGRESS ${stage} ${done}/${total} ${pct}% [${bar}] ${label}`)
+}
+
 phase('Verify')
 log(`${args.findings.length} High/Critical finding(s) to verify`)
 
@@ -68,6 +77,7 @@ const verdicts = await pipeline(
     ...(useAgentTypes ? { agentType: 'sf-health:finding-verifier' } : {}),
   }),
   (v, f) => {
+    progress(`verify`, args.findings.length, `verify:${f.finding_id}${v ? '' : ' (no output)'}`)
     if (v && v.finding_id !== f.finding_id) {
       idFixes.push({ label: `verify:${f.finding_id}`, returned: v.finding_id, expected: f.finding_id })
       log(`verify:${f.finding_id} returned finding_id "${v.finding_id}"; corrected`)

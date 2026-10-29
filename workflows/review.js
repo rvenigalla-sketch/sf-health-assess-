@@ -10,6 +10,7 @@ export const meta = {
 // args.run        absolute run folder (paths in shards are relative to it)
 // args.pluginRoot absolute sf-health plugin folder (reviewer rubrics live in agents/)
 // args.shards     [{shard_id, area, reviewer}] from shards/plan.json
+// args.kind       'review' or 'followup' (only labels the progress lines)
 // Full outputs are NOT returned here (they stay in this run's journal and are extracted by
 // scripts/extract_results.py); only a per-shard summary comes back.
 
@@ -114,6 +115,15 @@ function prompt(s) {
   ].join('\n')
 }
 
+// One PROGRESS line per finished agent (live in /workflows), same format as the scripts' progress lines.
+let done = 0
+function progress(stage, total, label) {
+  done += 1
+  const pct = total ? Math.floor(100 * done / total) : 100
+  const bar = '#'.repeat(Math.floor(pct / 5)).padEnd(20, '-')
+  log(`PROGRESS ${stage} ${done}/${total} ${pct}% [${bar}] ${label}`)
+}
+
 phase('Review')
 log(`${args.shards.length} shard(s) to review`)
 
@@ -130,6 +140,7 @@ const results = await pipeline(
     ...(useAgentTypes ? { agentType: `sf-health:${s.reviewer}` } : {}),
   }),
   (r, s) => {
+    progress(args.kind || 'review', args.shards.length, `review:${s.shard_id}${r ? '' : ' (no output)'}`)
     if (r && r.shard_id !== s.shard_id) {
       idFixes.push({ label: `review:${s.shard_id}`, returned: r.shard_id, expected: s.shard_id })
       log(`review:${s.shard_id} returned shard_id "${r.shard_id}"; corrected`)

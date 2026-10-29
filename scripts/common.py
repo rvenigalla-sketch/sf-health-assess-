@@ -200,6 +200,25 @@ class Timer:
         return (self.end or time.monotonic()) - self.start
 
 
+class Progress:
+    """Prints `PROGRESS <stage> done/total pct% [####------] detail` after each unit of a long step,
+    so the assess command can relay how far it has got. ASCII only (Windows consoles). Thread-safe."""
+
+    WIDTH = 20
+
+    def __init__(self, stage: str, total: int):
+        self.stage, self.total, self.done = stage, max(0, total), 0
+        self._lock = threading.Lock()
+
+    def tick(self, detail: str = "") -> None:
+        with self._lock:
+            self.done += 1
+            total = max(self.total, self.done)
+            pct = int(100 * self.done / total) if total else 100
+            bar = "#" * (pct * self.WIDTH // 100)
+            info(f"PROGRESS {self.stage} {self.done}/{total} {pct}% [{bar:-<{self.WIDTH}}] {detail}".rstrip())
+
+
 def content_hash(text: str) -> str:
     """Short content hash for incremental runs (line endings normalized, so a re-retrieve on
     another OS doesn't look like a change)."""

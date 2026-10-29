@@ -15,6 +15,9 @@ script below reuses it automatically (library opt-out, scoring thresholds, model
 again. Only if the user explicitly wants to change a setting now, pass `--config <file>` to the first
 script; that replaces the saved copy for the rest of the run.
 
+Start each step with a header line `**[Step N/5] <Name>**` and end it with one short result line.
+Step 2 runs as a background workflow: say it is running and that `/workflows` shows it live.
+
 1. **Import decisions**: `python "$PLUGIN/scripts/review_gate.py" import --run RUN`
    - Exit 3 means some findings have no decision, or their row was deleted from the sheet. Tell the
      user how many, and stop. Continue only if they explicitly accept leaving those out (then re-run
